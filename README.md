@@ -15,5 +15,10 @@
 
 ## 预览
 
-手机上要能打开，所以得先有个网址 —— Day 5 部署到 GitHub Pages 后这里会写上地址。
-在那之前，电脑上可以双击 `index.html` 看效果（手机上做不到）。
+网址：**https://daily-checkin-list.app.workbuddy.host/** —— 手机直接打开就能用（当前还是 Day 2 的占位页，功能 Day 7 才写）。
+
+**为什么不是 GitHub Pages**：`habit-checkin` 仓库属于组织 `XingHo-VibeCoding`，当前账号只有写权限、没有仓库管理权，开不了 Pages。所以先用 WorkBuddy 的发布通道拿到一个手机能访问的网址；等拿到组织权限或迁到个人账号再换。
+
+**怎么更新**：改完网页重新发布一次即可（不是自动同步）。发布是本地目录 `.deploy/`，只放网页文件 —— 有意把 `PRD.md`、`research.md`、`AGENTS.md` 和工作日志排除在外，避免它们变成公网可读。
+
+电脑上也可以双击 `index.html` 看效果。
