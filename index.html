@@ -233,6 +233,68 @@
       transition: background 0.15s ease;
     }
     .add-btn:hover { background: rgba(184, 155, 94, 0.18); }
+    /* 提醒区 */
+    li.hi { background: rgba(184, 155, 94, 0.1); border-left-color: var(--gold); }
+    li.hi .title { color: var(--gold); font-weight: 600; }
+    li.past .title { color: #c9705f; }
+    li.past { opacity: 0.62; }
+    .rm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .rm-meta {
+      font-size: 11px;
+      line-height: 1.3;
+      color: var(--muted);
+      letter-spacing: 0.03em;
+    }
+    li.hi .rm-meta { color: var(--gold); letter-spacing: 0.08em; }
+    li.past .rm-meta { color: #c9705f; }
+    .export-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .export-row .act:disabled { opacity: 0.4; cursor: not-allowed; }
+    .export-row .act:disabled:hover { background: rgba(184, 155, 94, 0.08); }
+    .export-tip { flex: 1; min-width: 140px; font-size: 11px; color: var(--soft); letter-spacing: 0.02em; }
+    .rem-form { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+    .rem-row { display: flex; gap: 8px; }
+    .rem-row .add-input { flex: 1; min-width: 0; }
+    .lead-input { flex: none !important; width: 92px; }
+    .lead-tip {
+      flex: none;
+      align-self: center;
+      font-size: 11px;
+      color: var(--soft);
+      letter-spacing: 0.04em;
+    }
+
+    /* 逾期区 */
+    li.od { border-left: 2px solid var(--accent); background: rgba(163, 53, 42, 0.06); }
+    li.od:hover { background: rgba(163, 53, 42, 0.11); border-left-color: #c9453a; }
+    .od-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .od-date {
+      font-size: 11px;
+      line-height: 1.3;
+      color: #c9705f;
+      letter-spacing: 0.03em;
+    }
+    .act {
+      flex: none;
+      padding: 5px 9px;
+      border: 1px solid var(--gold-dim);
+      border-radius: 2px;
+      background: rgba(184, 155, 94, 0.08);
+      color: var(--gold);
+      font-family: inherit;
+      font-size: 11.5px;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .act:hover { background: rgba(184, 155, 94, 0.2); }
+    li.od .del { opacity: 0.5; }
+    li.od:hover .del { opacity: 1; }
     .empty {
       padding: 16px;
       text-align: center;
@@ -295,6 +357,11 @@
       <div class="progress" id="progress"></div>
     </header>
 
+    <section class="block" id="overdueBlock" hidden>
+      <h2>逾期 <span id="overdueCount"></span></h2>
+      <ul id="overdueList"></ul>
+    </section>
+
     <section class="block">
       <h2>今日清单</h2>
       <ul id="todayList"></ul>
@@ -302,6 +369,27 @@
       <form class="add" id="addForm" autocomplete="off">
         <input class="add-input" id="addInput" type="text" placeholder="添加一项…" aria-label="添加事项">
         <button class="add-btn" type="submit" aria-label="添加">+</button>
+      </form>
+    </section>
+
+    <section class="block">
+      <h2>提醒</h2>
+      <ul id="remindList"></ul>
+      <div class="empty" id="remEmpty" hidden>还没有提醒，在下面加一条。</div>
+      <div class="export-row">
+        <button class="act" id="exportBtn" type="button">导出日历 .ics</button>
+        <span class="export-tip" id="exportTip"></span>
+      </div>
+      <form class="rem-form" id="remForm" autocomplete="off">
+        <div class="rem-row">
+          <input class="add-input" id="remTitle" type="text" placeholder="提醒标题…" aria-label="提醒标题">
+          <button class="add-btn" type="submit" aria-label="添加提醒">+</button>
+        </div>
+        <div class="rem-row">
+          <input class="add-input" id="remAt" type="datetime-local" aria-label="事件时间">
+          <input class="add-input lead-input" id="remLead" type="number" min="0" step="5" value="0" aria-label="提前分钟数">
+          <span class="lead-tip">分钟前</span>
+        </div>
       </form>
     </section>
 
@@ -394,13 +482,259 @@
       document.getElementById('progress').innerHTML =
         '<span>完成</span>' + done + '/' + todays.length;
 
-      document.getElementById('mascotLine').textContent = mascotLine(todays.length, done);
+      // 逾期 = 未完成 且 日期早于今天（YYYY-MM-DD 可直接字符串比较）
+      var overdue = state.items
+        .filter(function (i) { return !i.done && i.date < today; })
+        .sort(function (a, b) { return a.date < b.date ? -1 : 1; });
 
+      document.getElementById('mascotLine').textContent = mascotLine(todays.length, done, overdue.length);
+
+      renderOverdue(overdue, today);
       renderToday(todays);
+      renderReminders();
       document.getElementById('clearSeed').hidden = !state.seeded;
     }
 
-    function mascotLine(total, done) {
+    // ---------- 提醒（F2）----------
+    // 提醒时刻 = 事件时刻 − 提前量（A4：14:00 提前 90 分 → 10:30 就该响）
+    function remindViews() {
+      var now = Date.now();
+      return state.reminders.map(function (r) {
+        var at = new Date(r.at).getTime();
+        var remindAt = at - (r.lead || 0) * 60000;
+        return {
+          r: r,
+          at: at,
+          remindAt: remindAt,
+          hi: !r.done && now >= remindAt && at >= now,   // 已到提醒时刻 且 事件还没过 → 高亮
+          past: at < now                                  // 事件时间已过 → 标红（B2）
+        };
+      }).sort(function (a, b) {
+        if (a.r.done !== b.r.done) return a.r.done ? 1 : -1;   // 完成的排末尾（F2.5）
+        if (a.hi !== b.hi) return a.hi ? -1 : 1;               // 高亮置顶（F2.3）
+        return a.remindAt - b.remindAt;                        // 其余按提醒时刻升序（F2.2）
+      });
+    }
+
+    function fmtTime(dt) {
+      var md = (dt.getMonth() + 1) + '/' + dt.getDate();
+      return md + ' ' + pad(dt.getHours()) + ':' + pad(dt.getMinutes());
+    }
+
+    function renderReminders() {
+      var ul = document.getElementById('remindList');
+      var views = remindViews();
+      ul.innerHTML = '';
+      document.getElementById('remEmpty').hidden = views.length > 0;
+
+      views.forEach(function (v) {
+        var r = v.r;
+        var li = document.createElement('li');
+        li.className = (r.done ? 'done ' : '') + (v.hi ? 'hi ' : '') + (v.past && !r.done ? 'past ' : '');
+
+        var dot = document.createElement('button');
+        dot.className = 'dot' + (r.done ? ' on' : '');
+        dot.textContent = r.done ? '✓' : '';
+        dot.setAttribute('aria-label', '标记提醒完成');
+
+        var main = document.createElement('div');
+        main.className = 'rm-main';
+
+        var title = document.createElement('span');
+        title.className = 'title';
+        title.textContent = r.title;
+
+        var meta = document.createElement('span');
+        meta.className = 'rm-meta';
+        if (r.done) {
+          meta.textContent = '已完成 · ' + fmtTime(new Date(v.at));
+        } else if (v.past) {
+          meta.textContent = '已过期 · ' + fmtTime(new Date(v.at));
+        } else if (v.hi) {
+          meta.textContent = '现在！事件 ' + fmtTime(new Date(v.at)) +
+            (r.lead ? '（已提前 ' + r.lead + ' 分钟）' : '');
+        } else {
+          meta.textContent = fmtTime(new Date(v.at)) + ' 的事件 · ' +
+            (r.lead ? '提前 ' + r.lead + ' 分 → ' + fmtTime(new Date(v.remindAt)) + ' 提醒' : '到点提醒');
+        }
+
+        main.appendChild(title);
+        main.appendChild(meta);
+
+        var del = document.createElement('button');
+        del.className = 'del';
+        del.textContent = '✕';
+        del.title = '删除';
+        del.setAttribute('aria-label', '删除');
+
+        dot.addEventListener('click', function () { toggleReminder(r.id); });
+        del.addEventListener('click', function () { removeReminder(r.id); });
+
+        li.appendChild(dot);
+        li.appendChild(main);
+        li.appendChild(del);
+        ul.appendChild(li);
+      });
+
+      // 导出按钮状态：可导出条数 + 那句必须写明的代价
+      var n = exportable(views).length;
+      document.getElementById('exportBtn').disabled = n === 0;
+      document.getElementById('exportTip').textContent = n === 0
+        ? '没有可导出的提醒（已完成、已过期的不进日历）'
+        : '可导出 ' + n + ' 条 · 改了提醒要重新导出导入一次';
+
+      // 供定时器比对：只有状态真变了才重绘（避免每半分钟闪一下）
+      lastSig = views.map(function (v) {
+        return v.r.id + (v.hi ? '!' : '') + (v.past ? '~' : '') + (v.r.done ? '#' : '');
+      }).join(',');
+    }
+
+    var lastSig = '';
+
+    // ---------- 日历导出（F6）----------
+    // 只导「未完成 且 事件时间还没到」—— 已过期/已完成的进了日历也不会响（F6.1 / F6.4）
+    function exportable(views) {
+      return views.filter(function (v) { return !v.r.done && !v.past; });
+    }
+
+    function icsEscape(s) {
+      return String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;')
+        .replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+    }
+
+    // 本地浮动时间：20260923T140000（不带 Z，日历 App 按设备本地时区解释）
+    function icsLocal(dt) {
+      return dt.getFullYear() + pad(dt.getMonth() + 1) + pad(dt.getDate()) + 'T' +
+        pad(dt.getHours()) + pad(dt.getMinutes()) + '00';
+    }
+
+    // DTSTAMP 必须是 UTC（RFC 5545）
+    function icsUtc(dt) {
+      return dt.getUTCFullYear() + pad(dt.getUTCMonth() + 1) + pad(dt.getUTCDate()) + 'T' +
+        pad(dt.getUTCHours()) + pad(dt.getUTCMinutes()) + pad(dt.getUTCSeconds()) + 'Z';
+    }
+
+    function buildIcs(list) {
+      var lines = [
+        'BEGIN:VCALENDAR', 'VERSION:2.0',
+        'PRODID:-//habit-checkin//ZH//CN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'
+      ];
+      var stamp = icsUtc(new Date());
+
+      list.forEach(function (v) {
+        var r = v.r;
+        var dt = new Date(v.at);
+        lines.push('BEGIN:VEVENT');
+        lines.push('UID:' + r.id + '@habit-checkin');       // 稳定 UID：重复导入=更新（B5）
+        lines.push('DTSTAMP:' + stamp);
+        lines.push('DTSTART:' + icsLocal(dt));
+        lines.push('DTEND:' + icsLocal(new Date(v.at + 30 * 60000)));
+        lines.push('SUMMARY:' + icsEscape(r.title));
+        lines.push('DESCRIPTION:' + icsEscape('来自每日打卡清单（提前 ' + (r.lead || 0) + ' 分钟）'));
+        lines.push('BEGIN:VALARM');
+        lines.push('ACTION:DISPLAY');
+        lines.push('TRIGGER:-PT' + (r.lead || 0) + 'M');     // 提前量 → 系统日历的闹钟（F6.2）
+        lines.push('DESCRIPTION:' + icsEscape(r.title));
+        lines.push('END:VALARM');
+        lines.push('END:VEVENT');
+      });
+
+      lines.push('END:VCALENDAR');
+      return lines.join('\r\n');
+    }
+
+    document.getElementById('exportBtn').addEventListener('click', function () {
+      var list = exportable(remindViews());
+      if (list.length === 0) return;
+      var blob = new Blob([buildIcs(list)], { type: 'text/calendar;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'habit-checkin-reminders.ics';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    });
+
+    function toggleReminder(id) {
+      state.reminders.forEach(function (r) {
+        if (r.id === id) r.done = !r.done;
+      });
+      save();
+      render();
+    }
+
+    function removeReminder(id) {
+      state.reminders = state.reminders.filter(function (r) { return r.id !== id; });
+      save();
+      render();
+    }
+
+    function daysAgo(dateStr, today) {
+      var a = new Date(dateStr + 'T00:00:00');
+      var b = new Date(today + 'T00:00:00');
+      return Math.round((b - a) / 86400000);
+    }
+
+    function renderOverdue(list, today) {
+      var block = document.getElementById('overdueBlock');
+      var ul = document.getElementById('overdueList');
+      block.hidden = list.length === 0;
+      if (list.length === 0) { ul.innerHTML = ''; return; }
+
+      document.getElementById('overdueCount').textContent = '(' + list.length + ')';
+      ul.innerHTML = '';
+
+      list.forEach(function (item) {
+        var li = document.createElement('li');
+        li.className = 'od';
+
+        var main = document.createElement('div');
+        main.className = 'od-main';
+
+        var title = document.createElement('span');
+        title.className = 'title';
+        title.textContent = item.title;
+
+        var meta = document.createElement('span');
+        meta.className = 'od-date';
+        var n = daysAgo(item.date, today);
+        meta.textContent = item.date.slice(5).replace('-', ' 月 ') + ' 日 · 已过 ' + n + ' 天';
+
+        main.appendChild(title);
+        main.appendChild(meta);
+
+        var move = document.createElement('button');
+        move.className = 'act';
+        move.textContent = '挪到今天';
+        move.addEventListener('click', function () { moveToToday(item.id); });
+
+        var del = document.createElement('button');
+        del.className = 'del';
+        del.textContent = '✕';
+        del.title = '删除';
+        del.setAttribute('aria-label', '删除');
+        del.addEventListener('click', function () { removeItem(item.id); });
+
+        li.appendChild(main);
+        li.appendChild(move);
+        li.appendChild(del);
+        ul.appendChild(li);
+      });
+    }
+
+    function moveToToday(id) {
+      var t = todayStr();
+      state.items.forEach(function (i) {
+        if (i.id === id) i.date = t;
+      });
+      save();
+      render();
+    }
+
+    function mascotLine(total, done, overdue) {
+      if (overdue > 0) return '有 ' + overdue + ' 项昨天没做完，先处理它们。';
       if (total === 0) return '今天还没有事项，先加一条吧。';
       if (done === 0) return '今天从哪一件开始？';
       if (done === total) return '今日全清，敬礼！';
@@ -481,6 +815,39 @@
       addInput.value = '';
       addInput.focus();
     });
+
+    var remTitle = document.getElementById('remTitle');
+    var remAt = document.getElementById('remAt');
+    var remLead = document.getElementById('remLead');
+    document.getElementById('remForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var title = remTitle.value.trim();
+      if (!title) return;                                   // 空标题：无反应（B1 同款）
+      if (!remAt.value) { remAt.focus(); return; }           // 时间必填
+      var lead = parseInt(remLead.value, 10);
+      if (isNaN(lead) || lead < 0) lead = 0;
+
+      state.reminders.push({
+        id: uid(),
+        title: title,
+        at: remAt.value,        // "YYYY-MM-DDTHH:mm" 本地时间
+        lead: lead,
+        done: false
+      });
+      save();
+      render();
+      remTitle.value = '';
+      remLead.value = '0';
+      remTitle.focus();
+    });
+
+    // 到点自动高亮：每 30 秒比对一次状态，只有真变了才重绘（F2.3「不用刷新也能变」）
+    setInterval(function () {
+      var sig = remindViews().map(function (v) {
+        return v.r.id + (v.hi ? '!' : '') + (v.past ? '~' : '') + (v.r.done ? '#' : '');
+      }).join(',');
+      if (sig !== lastSig) render();
+    }, 30000);
 
     document.getElementById('clearSeed').addEventListener('click', function () {
       state.items = [];

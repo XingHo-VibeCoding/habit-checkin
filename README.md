@@ -16,14 +16,40 @@
 | Day 4 | PRD（PRD.md）：功能范围、明确不做 14 项、验收标准、AI 自检；追加决策 D8（提醒移交手机日历，**2026-09-21 由 D11 推翻**）与 D9（需部署到 GitHub Pages） |
 | Day 5 | 技术设计（TECH_DESIGN.md）：一句话数据流、前后端与数据库分工、技术路线、数据流图 |
 | Day 6 | 完善项目规则（AGENTS.md）：第八节追加两条规则 —— 推送结果只认接口、同一操作重试不超三次 |
-| Day 7 | MVP 功能（计划中） |
+| Day 7 | MVP 主功能落地：F4 存储 / F1 今日清单 / F3 逾期区 / F2 提醒 / F6 导出 `.ics`；进击的巨人风格视觉 + 底部看板娘；补「本地运行」一节 |
+
+## 本地运行
+
+**必须起本地服务器，不要双击打开。** 两个原因：一是 `file://` 下不同浏览器对 localStorage 的处理不一致（数据可能存不住或跟 `http://` 下的不互通）；二是截图、验证都要求在 `localhost` 地址下看。
+
+在项目目录下执行：
+
+```bash
+python -m http.server 8000
+```
+
+然后浏览器打开 **http://localhost:8000**。
+
+- 改完文件**不用重启服务器**，Ctrl+F5 强刷即可
+- Windows 上如果 `python` 不在 PATH，用完整路径（本机托管版）：
+  `C:\Users\MILK\.workbuddy\binaries\python\versions\3.13.12\python.exe -m http.server 8000`
+- 停掉服务器：在跑命令的终端里 `Ctrl+C`
+
+**看数据本体**（排查用）：F12 → Console 里执行
+`localStorage.getItem('habit-checkin:v1')`
+—— 所有清单和提醒都存在这一个 key 里，没有第二处。
 
 ## 预览
 
-网址：**https://daily-checkin-list.app.workbuddy.host/** —— 手机直接打开就能用（当前还是 Day 2 的占位页，功能 Day 7 才写）。
+网址：**https://daily-checkin-list.app.workbuddy.host/** —— 手机直接打开就能用。
+
+当前线上是 **Day 7 的 MVP**：今日清单能勾/能加/能删，逾期区、提醒、导出 `.ics` 都可用。
+（发布不自动同步 —— 本地改完功能要重新发布一次，线上才会更新。）
 
 **为什么不是 GitHub Pages**：`habit-checkin` 仓库属于组织 `XingHo-VibeCoding`，当前账号只有写权限、没有仓库管理权，开不了 Pages。所以先用 WorkBuddy 的发布通道拿到一个手机能访问的网址；等拿到组织权限或迁到个人账号再换。
 
 **怎么更新**：改完网页重新发布一次即可（不是自动同步）。发布是本地目录 `.deploy/`，只放网页文件 —— 有意把 `PRD.md`、`research.md`、`AGENTS.md` 和工作日志排除在外，避免它们变成公网可读。
 
-电脑上也可以双击 `index.html` 看效果。
+电脑上想看效果，用上面的「本地运行」起服务器 —— 别双击 `index.html`。
+
+**发布时记得带上图片**：`assets/mascot.jpg`（看板娘头像）必须一起进 `.deploy/`，否则线上头像裂图。
