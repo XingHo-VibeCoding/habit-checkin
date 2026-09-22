@@ -3,82 +3,493 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>每日打卡清单 · Day 2 占位页</title>
+  <title>每日打卡清单</title>
   <style>
     :root {
-      --bg: #f7f7f5;
-      --card: #ffffff;
-      --text: #2c2c2a;
-      --muted: #5f5e5a;
-      --line: #d3d1c7;
-      --accent: #185fa5;
+      --card-1: #23271f;
+      --card-2: #191c16;
+      --ink: #e9e3d2;
+      --muted: #9ba093;
+      --line: #3b4237;
+      --row-line: #2c3129;
+      --accent: #a3352a;
+      --gold: #b89b5e;
+      --gold-dim: #7d6a41;
+      --soft: #6f7468;
     }
     * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
     body {
       margin: 0;
+      padding: 20px 16px 32px;
       min-height: 100vh;
+      color: var(--ink);
+      font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+      background:
+        radial-gradient(900px 500px at 50% -5%, #33392f 0%, rgba(0, 0, 0, 0) 70%),
+        linear-gradient(180deg, #1d211a 0%, #101310 100%);
+      background-attachment: fixed;
+    }
+    /* 极淡的布料斜纹 */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.015) 0 2px, rgba(0, 0, 0, 0) 2px 4px);
+    }
+    .app {
+      position: relative;
+      z-index: 1;
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 22px 16px 10px;
+      border-radius: 3px;
+      background: linear-gradient(180deg, var(--card-1), var(--card-2));
+      border: 1px solid var(--line);
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 20px 44px rgba(0, 0, 0, 0.55);
+    }
+    /* 顶部警示斜纹条 */
+    .app::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 5px;
+      background: repeating-linear-gradient(45deg, var(--gold) 0 7px, #2a2e24 7px 14px);
+      opacity: 0.85;
+    }
+    .head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .wing { width: 44px; height: 44px; flex: none; color: var(--gold); opacity: 0.92; }
+    .mascot {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 6px 0 2px;
+      padding: 10px 12px 10px 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--line);
+      border-left: 2px solid var(--gold-dim);
+      border-radius: 3px;
+    }
+    .mascot img {
+      width: 62px;
+      height: 62px;
+      flex: none;
+      object-fit: cover;
+      border-radius: 50%;
+      border: 2px solid var(--gold-dim);
+      background: #2a2e24;
+    }
+    .mascot-bubble { flex: 1; min-width: 0; }
+    .mascot-name {
+      display: block;
+      font-size: 10px;
+      letter-spacing: 0.24em;
+      color: var(--gold-dim);
+      margin-bottom: 3px;
+    }
+    .mascot-line { font-size: 13.5px; line-height: 1.5; color: var(--ink); }
+    .date {
+      font-family: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+      font-size: 21px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      line-height: 1.2;
+    }
+    .week {
+      display: block;
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--gold-dim);
+      margin-top: 3px;
+    }
+    .progress {
+      flex: none;
+      padding: 5px 11px;
+      border: 1px solid var(--gold-dim);
+      border-radius: 2px;
+      background: rgba(184, 155, 94, 0.08);
+      color: var(--gold);
+      font-size: 13px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.04em;
+    }
+    .progress span { font-weight: 400; opacity: 0.7; margin-right: 4px; font-size: 11px; }
+    .block { padding: 16px 0 6px; }
+    .block + .block { border-top: 1px solid var(--line); }
+    .block h2 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.32em;
+      color: var(--gold);
+    }
+    .block h2::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, var(--gold-dim), rgba(0, 0, 0, 0));
+    }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 46px;
+      padding: 6px 6px 6px 2px;
+      margin: 0 -6px;
+      border-bottom: 1px solid var(--row-line);
+      border-left: 2px solid transparent;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    li:last-child { border-bottom: none; }
+    li:hover { background: rgba(255, 255, 255, 0.035); border-left-color: var(--accent); }
+    .dot {
+      flex: none;
+      width: 22px;
+      height: 22px;
+      border: 2px solid #5b6350;
+      border-radius: 2px;
+      background: rgba(0, 0, 0, 0.25);
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1;
       display: flex;
       align-items: center;
       justify-content: center;
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      padding: 24px;
+      padding: 0;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease, color 0.15s ease;
     }
-    .card {
-      background: var(--card);
+    .dot:active { transform: scale(0.92); }
+    .dot:hover { border-color: var(--gold); }
+    .dot.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .title { flex: 1; word-break: break-all; }
+    li.done .title { color: var(--soft); text-decoration: line-through; }
+    .del {
+      flex: none;
+      width: 28px;
+      height: 28px;
+      border: none;
+      border-radius: 2px;
+      background: none;
+      color: var(--soft);
+      font-size: 15px;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+    }
+    li:hover .del, .del:focus-visible { opacity: 1; }
+    .del:hover { color: #e8705f; background: rgba(163, 53, 42, 0.15); }
+    @media (hover: none) { .del { opacity: 0.5; } }
+    .add { display: flex; gap: 8px; margin-top: 12px; }
+    .add-input {
+      flex: 1;
+      min-width: 0;
+      padding: 10px 12px;
+      background: rgba(0, 0, 0, 0.25);
       border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 40px;
-      max-width: 520px;
-      width: 100%;
-    }
-    h1 {
-      margin: 0 0 8px;
-      font-size: 20px;
-      font-weight: 500;
-    }
-    .day {
-      display: inline-block;
-      font-size: 12px;
-      color: var(--accent);
-      border: 1px solid var(--accent);
-      border-radius: 999px;
-      padding: 2px 10px;
-      margin-bottom: 16px;
-    }
-    p {
-      margin: 0 0 12px;
+      border-radius: 2px;
+      color: var(--ink);
+      font-family: inherit;
       font-size: 14px;
-      line-height: 1.7;
-      color: var(--muted);
+      line-height: 1.4;
     }
-    ul {
-      margin: 0;
-      padding-left: 20px;
-      font-size: 14px;
-      line-height: 1.9;
-      color: var(--muted);
+    .add-input::placeholder { color: var(--soft); }
+    .add-input:focus {
+      outline: none;
+      border-color: var(--gold-dim);
+      background: rgba(0, 0, 0, 0.35);
+    }
+    .add-btn {
+      flex: none;
+      width: 42px;
+      border: 1px solid var(--gold-dim);
+      border-radius: 2px;
+      background: rgba(184, 155, 94, 0.08);
+      color: var(--gold);
+      font-size: 19px;
+      line-height: 1;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .add-btn:hover { background: rgba(184, 155, 94, 0.18); }
+    .empty {
+      padding: 16px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--soft);
+      letter-spacing: 0.08em;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px dashed #454c3e;
+      border-radius: 2px;
     }
     .foot {
-      margin-top: 24px;
-      padding-top: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-top: 16px;
+      padding: 12px 2px 2px;
       border-top: 1px solid var(--line);
-      font-size: 12px;
-      color: var(--muted);
+      font-size: 11px;
+      color: var(--soft);
+      letter-spacing: 0.04em;
     }
+    .link {
+      flex: none;
+      border: none;
+      background: none;
+      color: var(--gold);
+      font-size: 11.5px;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      padding: 4px 2px;
+    }
+    .link:hover { color: #d9bd80; text-decoration: underline; }
   </style>
 </head>
 <body>
-  <div class="card">
-    <span class="day">Day 2 · 第 1 周</span>
-    <h1>每日打卡清单</h1>
-    <p>这里是项目仓库的占位页。功能还没开始写，先把家安好。</p>
-    <ul>
-      <li>习惯打卡</li>
-      <li>昨天没做完的会留在顶部</li>
-    </ul>
-    <div class="foot">网站功能开发排在 Day 7，今天只完成仓库与首次提交。</div>
-  </div>
+  <main class="app">
+    <header class="head">
+      <div class="brand">
+        <svg class="wing" viewBox="0 0 48 48" aria-hidden="true">
+          <path d="M24 18 L14 15 L18.5 19 L11.5 20 L18 23 L14 28 L24 25 Z" fill="currentColor" opacity="0.35"/>
+          <path d="M24 18 L34 15 L29.5 19 L36.5 20 L30 23 L34 28 L24 25 Z" fill="currentColor" opacity="0.35"/>
+          <path d="M24 5.5 C17.5 5.5 13.5 10.5 13.5 16.5 C13.5 21.5 16.5 25.5 20.5 26.8 L20.5 29 L27.5 29 L27.5 26.8 C31.5 25.5 34.5 21.5 34.5 16.5 C34.5 10.5 30.5 5.5 24 5.5 Z" fill="currentColor"/>
+          <circle cx="20.6" cy="17.5" r="1.7" fill="#1d211a"/>
+          <circle cx="27.4" cy="17.5" r="1.7" fill="#1d211a"/>
+          <path d="M22.3 21.5 Q24 23.2 25.7 21.5" stroke="#1d211a" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+          <path d="M24 28.5 L19.5 32.5 L18.5 42.5 L22 39.8 L24 41.8 L26 39.8 L29.5 42.5 L28.5 32.5 Z" fill="currentColor"/>
+          <path d="M18.8 27.2 Q24 30.2 29.2 27.2 L29.2 30.8 Q24 33.2 18.8 30.8 Z" fill="#a3352a"/>
+          <path d="M28.5 29.5 L35 35.5 L30.5 36 Z" fill="#a3352a"/>
+          <rect x="14.5" y="32" width="4" height="7" rx="1" fill="currentColor" opacity="0.85"/>
+          <rect x="29.5" y="32" width="4" height="7" rx="1" fill="currentColor" opacity="0.85"/>
+          <path d="M12.5 29 L18.5 34.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M35.5 29 L29.5 34.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <div>
+          <div class="date" id="today"></div>
+          <span class="week" id="week"></span>
+        </div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </header>
+
+    <section class="block">
+      <h2>今日清单</h2>
+      <ul id="todayList"></ul>
+      <div class="empty" id="emptyHint" hidden>今天还没有事项，在下面加一条。</div>
+      <form class="add" id="addForm" autocomplete="off">
+        <input class="add-input" id="addInput" type="text" placeholder="添加一项…" aria-label="添加事项">
+        <button class="add-btn" type="submit" aria-label="添加">+</button>
+      </form>
+    </section>
+
+    <div class="mascot">
+      <img src="assets/mascot.jpg" alt="同行的小兵">
+      <div class="mascot-bubble">
+        <span class="mascot-name">SCOUT</span>
+        <span class="mascot-line" id="mascotLine"></span>
+      </div>
+    </div>
+
+    <footer class="foot">
+      <span id="tip">数据只存在这台设备的浏览器里</span>
+      <button class="link" id="clearSeed" hidden>清空示例</button>
+    </footer>
+  </main>
+
+  <script>
+    // ---------- 存储层（F4）----------
+    var KEY = 'habit-checkin:v1';
+
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+    function todayStr() {
+      var d = new Date();
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    }
+
+    function uid() {
+      return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    }
+
+    function load() {
+      try {
+        var raw = localStorage.getItem(KEY);
+        if (!raw) return null;
+        var data = JSON.parse(raw);
+        if (!data || !Array.isArray(data.items)) return null;
+        return {
+          items: data.items,
+          reminders: Array.isArray(data.reminders) ? data.reminders : [],
+          seeded: !!data.seeded
+        };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function save() {
+      try {
+        localStorage.setItem(KEY, JSON.stringify(state));
+      } catch (e) {
+        document.getElementById('tip').textContent = '保存失败：浏览器存储不可用';
+      }
+    }
+
+    function seed() {
+      var t = todayStr();
+      var now = new Date().toISOString();
+      return {
+        items: [
+          { id: uid(), title: '买咖啡豆', date: t, done: false, createdAt: now, doneAt: null },
+          { id: uid(), title: '复习第三章', date: t, done: false, createdAt: now, doneAt: null },
+          { id: uid(), title: '取快递', date: t, done: false, createdAt: now, doneAt: null }
+        ],
+        reminders: [],
+        seeded: true
+      };
+    }
+
+    var state = load();
+    if (!state) {
+      state = seed();
+      save();
+    }
+
+    // ---------- 渲染 ----------
+    var WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+    function render() {
+      var today = todayStr();
+      var d = new Date();
+      document.getElementById('today').textContent =
+        (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日';
+      document.getElementById('week').textContent =
+        d.getFullYear() + '.' + pad(d.getMonth() + 1) + '.' + pad(d.getDate()) + ' · ' + WEEK[d.getDay()];
+
+      var todays = state.items.filter(function (i) { return i.date === today; });
+      var done = todays.filter(function (i) { return i.done; }).length;
+      document.getElementById('progress').innerHTML =
+        '<span>完成</span>' + done + '/' + todays.length;
+
+      document.getElementById('mascotLine').textContent = mascotLine(todays.length, done);
+
+      renderToday(todays);
+      document.getElementById('clearSeed').hidden = !state.seeded;
+    }
+
+    function mascotLine(total, done) {
+      if (total === 0) return '今天还没有事项，先加一条吧。';
+      if (done === 0) return '今天从哪一件开始？';
+      if (done === total) return '今日全清，敬礼！';
+      if (done / total >= 0.5) return '过半了，剩下的不多。';
+      return '开始了就好，继续。';
+    }
+
+    function renderToday(list) {
+      var ul = document.getElementById('todayList');
+      ul.innerHTML = '';
+      document.getElementById('emptyHint').hidden = list.length > 0;
+
+      list.forEach(function (item) {
+        var li = document.createElement('li');
+        if (item.done) li.className = 'done';
+
+        var dot = document.createElement('button');
+        dot.className = 'dot' + (item.done ? ' on' : '');
+        dot.textContent = item.done ? '✓' : '';
+        dot.setAttribute('aria-label', '切换完成状态');
+
+        var title = document.createElement('span');
+        title.className = 'title';
+        title.textContent = item.title;
+
+        var del = document.createElement('button');
+        del.className = 'del';
+        del.textContent = '✕';
+        del.title = '删除';
+        del.setAttribute('aria-label', '删除');
+
+        dot.addEventListener('click', function () { toggleItem(item.id); });
+        del.addEventListener('click', function () { removeItem(item.id); });
+
+        li.appendChild(dot);
+        li.appendChild(title);
+        li.appendChild(del);
+        ul.appendChild(li);
+      });
+    }
+
+    function toggleItem(id) {
+      state.items.forEach(function (i) {
+        if (i.id === id) {
+          i.done = !i.done;
+          i.doneAt = i.done ? new Date().toISOString() : null;
+        }
+      });
+      save();
+      render();
+    }
+
+    function removeItem(id) {
+      state.items = state.items.filter(function (i) { return i.id !== id; });
+      save();
+      render();
+    }
+
+    function addItem(title) {
+      state.items.push({
+        id: uid(),
+        title: title,
+        date: todayStr(),
+        done: false,
+        createdAt: new Date().toISOString(),
+        doneAt: null
+      });
+      save();
+      render();
+    }
+
+    var addInput = document.getElementById('addInput');
+    document.getElementById('addForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var title = addInput.value.trim();
+      if (!title) return;
+      addItem(title);
+      addInput.value = '';
+      addInput.focus();
+    });
+
+    document.getElementById('clearSeed').addEventListener('click', function () {
+      state.items = [];
+      state.seeded = false;
+      save();
+      render();
+    });
+
+    render();
+  </script>
 </body>
 </html>
