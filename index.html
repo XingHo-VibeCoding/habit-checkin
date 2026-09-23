@@ -6,16 +6,16 @@
   <title>每日打卡清单</title>
   <style>
     :root {
-      --card-1: #23271f;
-      --card-2: #191c16;
-      --ink: #e9e3d2;
-      --muted: #9ba093;
-      --line: #3b4237;
-      --row-line: #2c3129;
+      --card-1: #faf6ec;
+      --card-2: #f2ebda;
+      --ink: #2c2a22;
+      --muted: #6a6658;
+      --line: #ddd4bf;
+      --row-line: #e9e2d0;
       --accent: #a3352a;
-      --gold: #b89b5e;
-      --gold-dim: #7d6a41;
-      --soft: #6f7468;
+      --gold: #7a6130;
+      --gold-dim: #8f7a4a;
+      --soft: #6c6656;
     }
     * { box-sizing: border-box; }
     html { -webkit-text-size-adjust: 100%; }
@@ -28,18 +28,30 @@
       font-size: 15px;
       line-height: 1.5;
       background:
-        radial-gradient(900px 500px at 50% -5%, #33392f 0%, rgba(0, 0, 0, 0) 70%),
-        linear-gradient(180deg, #1d211a 0%, #101310 100%);
+        radial-gradient(900px 500px at 50% -5%, #fffdf6 0%, rgba(0, 0, 0, 0) 70%),
+        linear-gradient(180deg, #f4eddd 0%, #e6dec9 100%);
       background-attachment: fixed;
     }
-    /* 极淡的布料斜纹 */
+    /* 做旧纸感：纤维斜纹 + 几处陈旧污渍 */
     body::before {
       content: "";
       position: fixed;
       inset: 0;
       z-index: 0;
       pointer-events: none;
-      background: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.015) 0 2px, rgba(0, 0, 0, 0) 2px 4px);
+      background:
+        radial-gradient(340px 250px at 14% 20%, rgba(140, 108, 48, 0.09), rgba(0, 0, 0, 0) 70%),
+        radial-gradient(280px 210px at 86% 74%, rgba(163, 53, 42, 0.05), rgba(0, 0, 0, 0) 70%),
+        repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.02) 0 2px, rgba(0, 0, 0, 0) 2px 4px);
+    }
+    /* 纸张边缘：四周做旧压深 */
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background: radial-gradient(125% 95% at 50% 38%, rgba(0, 0, 0, 0) 52%, rgba(96, 78, 45, 0.16) 100%);
     }
     .app {
       position: relative;
@@ -50,7 +62,7 @@
       border-radius: 3px;
       background: linear-gradient(180deg, var(--card-1), var(--card-2));
       border: 1px solid var(--line);
-      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 20px 44px rgba(0, 0, 0, 0.55);
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 14px 34px rgba(70, 58, 34, 0.14);
     }
     /* 顶部警示斜纹条 */
     .app::before {
@@ -60,9 +72,58 @@
       right: 0;
       top: 0;
       height: 5px;
-      background: repeating-linear-gradient(45deg, var(--gold) 0 7px, #2a2e24 7px 14px);
+      background: repeating-linear-gradient(45deg, var(--gold) 0 7px, #efe7d4 7px 14px);
       opacity: 0.85;
     }
+    /* 页头招牌：兵团标签（关掉方式：删掉 .corps-bar 这段） */
+    .corps-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 2px 0 15px;
+    }
+    .corps-bar::before,
+    .corps-bar::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, rgba(143, 122, 74, 0), var(--gold-dim), rgba(143, 122, 74, 0));
+    }
+    .corps-bar span {
+      flex: none;
+      font-size: 10px;
+      letter-spacing: 0.3em;
+      text-indent: 0.3em;
+      color: var(--gold);
+    }
+    /* 徽章 hover：翅膀轻展（关掉方式：删掉 .w1 .w2 这段） */
+    .w1, .w2 {
+      transform-box: view-box;
+      transform-origin: 24px 19px;
+      transition: transform 0.28s ease;
+    }
+    .brand:hover .w1 { transform: translateX(-2.5px) rotate(-5deg); }
+    .brand:hover .w2 { transform: translateX(2.5px) rotate(5deg); }
+    @media (prefers-reduced-motion: reduce) { .w1, .w2 { transition: none; } }
+
+    /* 区块之间：城墙砖缝（关掉方式：改回 border-top: 1px solid var(--line)） */
+    .block + .block {
+      border-top: none;
+      padding-top: 24px;
+    }
+    .block + .block::before {
+      content: "";
+      display: block;
+      height: 9px;
+      margin: 0 0 18px;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background:
+        repeating-linear-gradient(90deg, transparent 0 19px, var(--line) 19px 20px) 0 0 / 100% 4.5px repeat-x,
+        repeating-linear-gradient(90deg, transparent 0 9px, var(--line) 9px 10px, transparent 10px 19px) 0 4.5px / 100% 4.5px repeat-x;
+      opacity: 0.7;
+    }
+
     .head {
       display: flex;
       align-items: center;
@@ -79,7 +140,7 @@
       gap: 12px;
       margin: 6px 0 2px;
       padding: 10px 12px 10px 10px;
-      background: rgba(255, 255, 255, 0.03);
+      background: rgba(0, 0, 0, 0.025);
       border: 1px solid var(--line);
       border-left: 2px solid var(--gold-dim);
       border-radius: 3px;
@@ -91,47 +152,68 @@
       object-fit: cover;
       border-radius: 50%;
       border: 2px solid var(--gold-dim);
-      background: #2a2e24;
+      background: #e8e1cf;
     }
     .mascot-bubble { flex: 1; min-width: 0; }
     .mascot-name {
       display: block;
       font-size: 10px;
       letter-spacing: 0.24em;
-      color: var(--gold-dim);
+      color: var(--muted);
       margin-bottom: 3px;
     }
     .mascot-line { font-size: 13.5px; line-height: 1.5; color: var(--ink); }
     .date {
-      font-family: Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+      font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
       font-size: 21px;
       font-weight: 700;
       letter-spacing: 0.02em;
       line-height: 1.2;
+      font-variant-numeric: lining-nums tabular-nums;
     }
     .week {
       display: block;
       font-size: 11px;
       letter-spacing: 0.22em;
       text-transform: uppercase;
-      color: var(--gold-dim);
+      color: var(--gold);
       margin-top: 3px;
     }
     .progress {
+      position: relative;
+      overflow: hidden;
       flex: none;
       padding: 5px 11px;
       border: 1px solid var(--gold-dim);
       border-radius: 2px;
-      background: rgba(184, 155, 94, 0.08);
+      background: rgba(138, 111, 55, 0.07);
       color: var(--gold);
       font-size: 13px;
       font-weight: 700;
-      font-variant-numeric: tabular-nums;
+      font-variant-numeric: lining-nums tabular-nums;
       letter-spacing: 0.04em;
     }
-    .progress span { font-weight: 400; opacity: 0.7; margin-right: 4px; font-size: 11px; }
+    /* 完成度 —— 把砖墙向里推进（关掉方式：删掉这条 ::before） */
+    .progress::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: var(--pct, 0%);
+      background: repeating-linear-gradient(90deg, rgba(176, 58, 46, 0.6) 0 6px, rgba(176, 58, 46, 0.34) 6px 8px);
+      transition: width 0.35s ease;
+    }
+    @media (prefers-reduced-motion: reduce) { .progress::before { transition: none; } }
+    .progress > .pg { position: relative; }
+    .progress i {
+      font-style: normal;
+      font-weight: 400;
+      opacity: 0.7;
+      margin-right: 4px;
+      font-size: 11px;
+    }
     .block { padding: 16px 0 6px; }
-    .block + .block { border-top: 1px solid var(--line); }
     .block h2 {
       display: flex;
       align-items: center;
@@ -161,14 +243,14 @@
       transition: background 0.15s ease, border-color 0.15s ease;
     }
     li:last-child { border-bottom: none; }
-    li:hover { background: rgba(255, 255, 255, 0.035); border-left-color: var(--accent); }
+    li:hover { background: rgba(0, 0, 0, 0.04); border-left-color: var(--accent); }
     .dot {
       flex: none;
       width: 22px;
       height: 22px;
-      border: 2px solid #5b6350;
+      border: 2px solid #c3bca7;
       border-radius: 2px;
-      background: rgba(0, 0, 0, 0.25);
+      background: rgba(255, 255, 255, 0.62);
       color: var(--ink);
       font-size: 13px;
       line-height: 1;
@@ -206,7 +288,7 @@
       flex: 1;
       min-width: 0;
       padding: 10px 12px;
-      background: rgba(0, 0, 0, 0.25);
+      background: rgba(255, 255, 255, 0.62);
       border: 1px solid var(--line);
       border-radius: 2px;
       color: var(--ink);
@@ -218,23 +300,74 @@
     .add-input:focus {
       outline: none;
       border-color: var(--gold-dim);
-      background: rgba(0, 0, 0, 0.35);
+      background: #fffdf8;
     }
     .add-btn {
       flex: none;
       width: 42px;
       border: 1px solid var(--gold-dim);
       border-radius: 2px;
-      background: rgba(184, 155, 94, 0.08);
+      background: rgba(138, 111, 55, 0.07);
       color: var(--gold);
       font-size: 19px;
       line-height: 1;
       cursor: pointer;
       transition: background 0.15s ease;
     }
-    .add-btn:hover { background: rgba(184, 155, 94, 0.18); }
+    .add-btn:hover { background: rgba(138, 111, 55, 0.16); }
+    /* 状态视图：错误 */
+    .state-view { display: none; text-align: center; padding: 30px 12px 24px; }
+    body.is-error .app > *:not(.state-view) { display: none !important; }
+    body.is-error .state-view { display: block; }
+    .state-icon {
+      width: 46px;
+      height: 46px;
+      margin: 0 auto 16px;
+      border: 1.5px solid var(--accent);
+      border-radius: 50%;
+      color: var(--accent);
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 43px;
+    }
+    .state-title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      margin-bottom: 8px;
+    }
+    .state-desc {
+      font-size: 12.5px;
+      line-height: 1.65;
+      color: var(--muted);
+      margin-bottom: 18px;
+    }
+
+    /* 加载态：骨架屏 */
+    .skeleton { display: none; }
+    body.is-loading .app > *:not(.skeleton) { display: none !important; }
+    body.is-loading .skeleton { display: block; padding: 4px 0 10px; }
+    .sk {
+      height: 13px;
+      border-radius: 2px;
+      margin: 0 0 12px;
+      background: linear-gradient(90deg, #e6dfcc 25%, #f2ebda 50%, #e6dfcc 75%);
+      background-size: 200% 100%;
+      animation: sk-shimmer 1.3s ease-in-out infinite;
+    }
+    .sk-head { height: 22px; width: 46%; margin-bottom: 20px; }
+    .sk:nth-child(2) { width: 92%; }
+    .sk:nth-child(3) { width: 78%; }
+    .sk:nth-child(4) { width: 85%; }
+    .sk:nth-child(5) { width: 64%; }
+    @keyframes sk-shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
+
     /* 提醒区 */
-    li.hi { background: rgba(184, 155, 94, 0.1); border-left-color: var(--gold); }
+    li.hi { background: rgba(138, 111, 55, 0.1); border-left-color: var(--gold); }
     li.hi .title { color: var(--gold); font-weight: 600; }
     li.past .title { color: #c9705f; }
     li.past { opacity: 0.62; }
@@ -255,7 +388,7 @@
       flex-wrap: wrap;
     }
     .export-row .act:disabled { opacity: 0.4; cursor: not-allowed; }
-    .export-row .act:disabled:hover { background: rgba(184, 155, 94, 0.08); }
+    .export-row .act:disabled:hover { background: rgba(138, 111, 55, 0.07); }
     .export-tip { flex: 1; min-width: 140px; font-size: 11px; color: var(--soft); letter-spacing: 0.02em; }
     .rem-form { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
     .rem-row { display: flex; gap: 8px; }
@@ -284,7 +417,7 @@
       padding: 5px 9px;
       border: 1px solid var(--gold-dim);
       border-radius: 2px;
-      background: rgba(184, 155, 94, 0.08);
+      background: rgba(138, 111, 55, 0.07);
       color: var(--gold);
       font-family: inherit;
       font-size: 11.5px;
@@ -292,7 +425,7 @@
       cursor: pointer;
       transition: background 0.15s ease;
     }
-    .act:hover { background: rgba(184, 155, 94, 0.2); }
+    .act:hover { background: rgba(138, 111, 55, 0.18); }
     li.od .del { opacity: 0.5; }
     li.od:hover .del { opacity: 1; }
     .empty {
@@ -301,8 +434,8 @@
       font-size: 13px;
       color: var(--soft);
       letter-spacing: 0.08em;
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px dashed #454c3e;
+      background: rgba(0, 0, 0, 0.02);
+      border: 1px dashed #cfc6ae;
       border-radius: 2px;
     }
     .foot {
@@ -332,11 +465,25 @@
 </head>
 <body>
   <main class="app">
+    <div class="skeleton" id="skeleton" aria-hidden="true">
+      <div class="sk sk-head"></div>
+      <div class="sk"></div>
+      <div class="sk"></div>
+      <div class="sk"></div>
+      <div class="sk"></div>
+    </div>
+    <div class="state-view" id="errorView">
+      <div class="state-icon" aria-hidden="true">!</div>
+      <div class="state-title">数据没能读出来</div>
+      <div class="state-desc" id="errorMsg"></div>
+      <button class="act" id="retryBtn" type="button">重试</button>
+    </div>
+    <div class="corps-bar"><span>调查兵团 · 每日任务</span></div>
     <header class="head">
       <div class="brand">
         <svg class="wing" viewBox="0 0 48 48" aria-hidden="true">
-          <path d="M24 18 L14 15 L18.5 19 L11.5 20 L18 23 L14 28 L24 25 Z" fill="currentColor" opacity="0.35"/>
-          <path d="M24 18 L34 15 L29.5 19 L36.5 20 L30 23 L34 28 L24 25 Z" fill="currentColor" opacity="0.35"/>
+          <path class="w1" d="M24 18 L14 15 L18.5 19 L11.5 20 L18 23 L14 28 L24 25 Z" fill="currentColor" opacity="0.35"/>
+          <path class="w2" d="M24 18 L34 15 L29.5 19 L36.5 20 L30 23 L34 28 L24 25 Z" fill="currentColor" opacity="0.35"/>
           <path d="M24 5.5 C17.5 5.5 13.5 10.5 13.5 16.5 C13.5 21.5 16.5 25.5 20.5 26.8 L20.5 29 L27.5 29 L27.5 26.8 C31.5 25.5 34.5 21.5 34.5 16.5 C34.5 10.5 30.5 5.5 24 5.5 Z" fill="currentColor"/>
           <circle cx="20.6" cy="17.5" r="1.7" fill="#1d211a"/>
           <circle cx="27.4" cy="17.5" r="1.7" fill="#1d211a"/>
@@ -446,25 +593,75 @@
       }
     }
 
-    function seed() {
+    // ---------- Mock 数据源 ----------
+    // 第 3 周接真实 API 时，只替换 fetchState() 内部这一小块；UI 层一行都不用改
+    var MOCK = {
+      items: ['买咖啡豆', '复习第三章', '取快递'],
+      reminders: [
+        { title: '高铁去上海', hours: 5, lead: 90 },
+        { title: '作业截止', hours: 9, lead: 0 }
+      ]
+    };
+
+    function localInputValue(hoursFromNow) {
+      var d = new Date(Date.now() + hoursFromNow * 3600000);
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+        'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    function mockState() {
       var t = todayStr();
       var now = new Date().toISOString();
       return {
-        items: [
-          { id: uid(), title: '买咖啡豆', date: t, done: false, createdAt: now, doneAt: null },
-          { id: uid(), title: '复习第三章', date: t, done: false, createdAt: now, doneAt: null },
-          { id: uid(), title: '取快递', date: t, done: false, createdAt: now, doneAt: null }
-        ],
-        reminders: [],
+        items: MOCK.items.map(function (title) {
+          return { id: uid(), title: title, date: t, done: false, createdAt: now, doneAt: null };
+        }),
+        reminders: MOCK.reminders.map(function (r) {
+          return { id: uid(), title: r.title, at: localInputValue(r.hours), lead: r.lead, done: false };
+        }),
         seeded: true
       };
     }
 
-    var state = load();
-    if (!state) {
-      state = seed();
-      save();
+    // 浏览器到底让不让写 localStorage（无痕模式 / 配额满 / 被策略禁用时会 false）
+    function storageOk() {
+      try {
+        localStorage.setItem('__probe__', '1');
+        localStorage.removeItem('__probe__');
+        return true;
+      } catch (e) {
+        return false;
+      }
     }
+
+    // 取数据 —— 异步、且可能失败。
+    // 这一层存在的意义：让「加载中」和「错误」两种状态在技术上成立。
+    // 同步读 localStorage 的版本无处安放这两种状态，因为它不会慢、也不会报错。
+    function fetchState() {
+      return new Promise(function (resolve, reject) {
+        setTimeout(function () {
+          try {
+            if (FORCE_STATE === 'error') throw new Error('模拟：取数据失败');
+            if (FORCE_STATE === 'loading') return;          // 一直停在加载态
+            if (FORCE_STATE === 'mock') {                   // 强制假数据版（演示/截图），不落盘
+              resolve(mockState());
+              return;
+            }
+            if (FORCE_STATE === 'empty') {                  // 强制空数据版（演示空态），不落盘
+              resolve({ items: [], reminders: [], seeded: false });
+              return;
+            }
+            if (!storageOk()) throw new Error('浏览器不允许读写本地存储（可能开着无痕模式）');
+            resolve(load() || mockState());
+          } catch (e) {
+            reject(e);
+          }
+        }, 600);   // 模拟一次网络往返；接真 API 后这里换成 fetch
+      });
+    }
+
+    var FORCE_STATE = new URLSearchParams(location.search).get('state');
+    var state = null;
 
     // ---------- 渲染 ----------
     var WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -479,8 +676,10 @@
 
       var todays = state.items.filter(function (i) { return i.date === today; });
       var done = todays.filter(function (i) { return i.done; }).length;
-      document.getElementById('progress').innerHTML =
-        '<span>完成</span>' + done + '/' + todays.length;
+      var progressEl = document.getElementById('progress');
+      progressEl.innerHTML = '<span class="pg"><i>完成</i>' + done + '/' + todays.length + '</span>';
+      progressEl.style.setProperty('--pct',
+        todays.length ? Math.round(done / todays.length * 100) + '%' : '0%');
 
       // 逾期 = 未完成 且 日期早于今天（YYYY-MM-DD 可直接字符串比较）
       var overdue = state.items
@@ -843,6 +1042,7 @@
 
     // 到点自动高亮：每 30 秒比对一次状态，只有真变了才重绘（F2.3「不用刷新也能变」）
     setInterval(function () {
+      if (!state) return;                                   // 数据还没到（或加载失败），跳过
       var sig = remindViews().map(function (v) {
         return v.r.id + (v.hi ? '!' : '') + (v.past ? '~' : '') + (v.r.done ? '#' : '');
       }).join(',');
@@ -856,7 +1056,39 @@
       render();
     });
 
-    render();
+    // ---------- 启动 ----------
+    // 四态里的「错误」在开发时几乎不会自然出现，所以必须能被强制触发才好验证
+    function showError(err) {
+      document.body.classList.add('is-error');
+      document.getElementById('errorMsg').textContent =
+        err.message + '。可以点重试；如果浏览器不让存数据，换普通窗口（别用无痕）再打开。';
+    }
+
+    function boot() {
+      document.body.classList.remove('is-error');
+      document.body.classList.add('is-loading');
+      fetchState().then(function (data) {
+        state = data;
+        var isDemo = FORCE_STATE === 'mock' || FORCE_STATE === 'empty';
+        if (!isDemo) save();                              // 演示态不写回，绝不碰真实存储
+        document.body.classList.remove('is-loading');
+        render();
+      }).catch(function (err) {
+        document.body.classList.remove('is-loading');
+        showError(err);
+      });
+    }
+
+    document.getElementById('retryBtn').addEventListener('click', function () {
+      // 先把强制失败开关摘掉，否则点了重试还是失败，看着像坏了
+      if (FORCE_STATE === 'error') {
+        FORCE_STATE = null;
+        history.replaceState(null, '', location.pathname);
+      }
+      boot();
+    });
+
+    boot();
   </script>
 </body>
 </html>
