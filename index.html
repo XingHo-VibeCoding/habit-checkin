@@ -10,12 +10,20 @@
       --card-2: #f2ebda;
       --ink: #2c2a22;
       --muted: #6a6658;
-      --line: #ddd4bf;
+      /* 原 #ddd4bf 与卡片明度只差 11.8，弱光下几乎看不见；加深到差 20.0 */
+      --line: #c9bda2;
       --row-line: #e9e2d0;
       --accent: #a3352a;
+      /* 军绿：第二个色相家族（88°），管结构性元素。原来整页只有 40-48° 一个黄褐家族，视觉太平 */
+      --olive: #5c6650;
       --gold: #7a6130;
       --gold-dim: #8f7a4a;
       --soft: #6c6656;
+      /* Day 9 审查后新增：原 #c9705f 在卡片底色上只有 2.96:1，不达 WCAG AA 4.5:1 */
+      --danger-ink: #9e4636;
+      /* hover 态要比常态更深，不能更浅 */
+      --gold-deep: #5c4823;
+      --soft-deep: #57523f;
     }
     * { box-sizing: border-box; }
     html { -webkit-text-size-adjust: 100%; }
@@ -136,25 +144,31 @@
     .wing { width: 44px; height: 44px; flex: none; color: var(--gold); opacity: 0.92; }
     .mascot {
       display: flex;
-      align-items: center;
-      gap: 12px;
-      margin: 6px 0 2px;
-      padding: 10px 12px 10px 10px;
-      background: rgba(0, 0, 0, 0.025);
-      border: 1px solid var(--line);
-      border-left: 2px solid var(--gold-dim);
-      border-radius: 3px;
+      align-items: flex-end;
+      gap: 10px;
+      margin: 10px 0 2px;
+      padding: 0 2px 0 0;
+      background: none;
+      border: none;
     }
     .mascot img {
-      width: 62px;
-      height: 62px;
+      width: 76px;
+      height: auto;
       flex: none;
-      object-fit: cover;
-      border-radius: 50%;
-      border: 2px solid var(--gold-dim);
-      background: #e8e1cf;
+      align-self: flex-end;
+      filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.22));
+      pointer-events: none;
+      user-select: none;
     }
-    .mascot-bubble { flex: 1; min-width: 0; }
+    .mascot-bubble {
+      flex: 1;
+      min-width: 0;
+      margin-bottom: 12px;
+      padding: 7px 10px 8px;
+      background: rgba(0, 0, 0, 0.028);
+      border: 1px solid var(--line);
+      border-radius: 2px 10px 10px 10px;
+    }
     .mascot-name {
       display: block;
       font-size: 10px;
@@ -179,40 +193,49 @@
       color: var(--gold);
       margin-top: 3px;
     }
+    /* 完成度 —— 「3/5」是打卡产品的情绪核心，必须是全页最大的字（服务 PRD 的 A1 十秒判据） */
     .progress {
-      position: relative;
-      overflow: hidden;
       flex: none;
-      padding: 5px 11px;
-      border: 1px solid var(--gold-dim);
-      border-radius: 2px;
-      background: rgba(138, 111, 55, 0.07);
-      color: var(--gold);
-      font-size: 13px;
-      font-weight: 700;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      color: var(--ink);
       font-variant-numeric: lining-nums tabular-nums;
-      letter-spacing: 0.04em;
     }
-    /* 完成度 —— 把砖墙向里推进（关掉方式：删掉这条 ::before） */
-    .progress::before {
-      content: "";
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
+    .progress .pg { display: flex; align-items: baseline; gap: 5px; }
+    .pg-num {
+      font-size: 30px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: 0.01em;
+    }
+    .pg-tot { font-size: 15px; font-weight: 600; color: var(--muted); }
+    .pg-label {
+      font-size: 10px;
+      font-weight: 400;
+      letter-spacing: 0.22em;
+      color: var(--gold);
+    }
+    /* 全部完成 = 唯一值得用强调色的时刻（锐利色的用法是「少而准」，不是到处撒） */
+    .progress.is-done .pg-num,
+    .progress.is-done .pg-tot { color: var(--accent); }
+    /* 砖墙推进条：从数字背后挪到下方 —— 30px 的字压在纹理上不好读 */
+    .pg-track {
+      width: 88px;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(0, 0, 0, 0.08);
+      overflow: hidden;
+    }
+    .pg-track i {
+      display: block;
+      height: 100%;
       width: var(--pct, 0%);
-      background: repeating-linear-gradient(90deg, rgba(176, 58, 46, 0.6) 0 6px, rgba(176, 58, 46, 0.34) 6px 8px);
+      background: repeating-linear-gradient(90deg, rgba(176, 58, 46, 0.75) 0 6px, rgba(176, 58, 46, 0.42) 6px 8px);
       transition: width 0.35s ease;
     }
-    @media (prefers-reduced-motion: reduce) { .progress::before { transition: none; } }
-    .progress > .pg { position: relative; }
-    .progress i {
-      font-style: normal;
-      font-weight: 400;
-      opacity: 0.7;
-      margin-right: 4px;
-      font-size: 11px;
-    }
+    @media (prefers-reduced-motion: reduce) { .pg-track i { transition: none; } }
     .block { padding: 16px 0 6px; }
     .block h2 {
       display: flex;
@@ -230,6 +253,63 @@
       height: 1px;
       background: linear-gradient(90deg, var(--gold-dim), rgba(0, 0, 0, 0));
     }
+    /* 今日清单是主角：字号提级 + 军绿，跟"提醒"拉开视觉层级 */
+    #todayBlock h2 {
+      font-size: 14px;
+      letter-spacing: 0.18em;
+      color: var(--olive);
+    }
+    #todayBlock h2::after {
+      background: linear-gradient(90deg, var(--olive), rgba(0, 0, 0, 0));
+    }
+    #overdueBlock h2 { color: var(--danger-ink); }
+    /* 提醒区默认折叠 —— 它比主角还重，但不是每天都用。标题压浅，让位给今日清单 */
+    .fold > summary {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      list-style: none;
+    }
+    .fold > summary::-webkit-details-marker { display: none; }
+    .fold > summary::marker { content: ""; }
+    .fold > summary:focus-visible {
+      outline: 2px solid var(--gold-deep);
+      outline-offset: 3px;
+    }
+    .fold > summary h2 {
+      flex: 1;
+      margin-bottom: 0;
+      color: var(--muted);
+    }
+    .fold[open] > summary h2 { margin-bottom: 8px; }
+    /* 折叠时也要看得出有几条待办提醒 */
+    .fold-count {
+      flex: none;
+      min-width: 16px;
+      padding: 1px 6px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      text-align: center;
+    }
+    .fold-count[hidden] { display: none; }
+    .fold > summary::after {
+      content: "";
+      flex: none;
+      width: 7px;
+      height: 7px;
+      border-right: 1.5px solid var(--muted);
+      border-bottom: 1.5px solid var(--muted);
+      transform: rotate(-45deg);
+      margin-top: -3px;
+      transition: transform 0.2s ease;
+    }
+    .fold[open] > summary::after { transform: rotate(45deg); margin-top: 3px; }
+    @media (prefers-reduced-motion: reduce) { .fold > summary::after { transition: none; } }
     ul { list-style: none; margin: 0; padding: 0; }
     li {
       display: flex;
@@ -245,6 +325,7 @@
     li:last-child { border-bottom: none; }
     li:hover { background: rgba(0, 0, 0, 0.04); border-left-color: var(--accent); }
     .dot {
+      position: relative;
       flex: none;
       width: 22px;
       height: 22px;
@@ -267,6 +348,7 @@
     .title { flex: 1; word-break: break-all; }
     li.done .title { color: var(--soft); text-decoration: line-through; }
     .del {
+      position: relative;
       flex: none;
       width: 28px;
       height: 28px;
@@ -281,8 +363,9 @@
       transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
     }
     li:hover .del, .del:focus-visible { opacity: 1; }
-    .del:hover { color: #e8705f; background: rgba(163, 53, 42, 0.15); }
-    @media (hover: none) { .del { opacity: 0.5; } }
+    .del:hover { color: #b8392a; background: rgba(163, 53, 42, 0.15); }
+    /* 触屏没有 hover，删除键常驻显示；这时必须用更深的墨色，原来 opacity 0.5 只有 1.98:1 */
+    @media (hover: none) { .del { opacity: 1; color: var(--soft-deep); } }
     .add { display: flex; gap: 8px; margin-top: 12px; }
     .add-input {
       flex: 1;
@@ -369,8 +452,9 @@
     /* 提醒区 */
     li.hi { background: rgba(138, 111, 55, 0.1); border-left-color: var(--gold); }
     li.hi .title { color: var(--gold); font-weight: 600; }
-    li.past .title { color: #c9705f; }
-    li.past { opacity: 0.62; }
+    li.past .title { color: var(--danger-ink); }
+    /* 原来靠 opacity 0.62 做弱化，叠在深色字上只剩 1.9:1；改用底色区分，文字保持全不透明 */
+    li.past { opacity: 1; background: rgba(0, 0, 0, 0.025); }
     .rm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
     .rm-meta {
       font-size: 11px;
@@ -379,7 +463,7 @@
       letter-spacing: 0.03em;
     }
     li.hi .rm-meta { color: var(--gold); letter-spacing: 0.08em; }
-    li.past .rm-meta { color: #c9705f; }
+    li.past .rm-meta { color: var(--danger-ink); }
     .export-row {
       display: flex;
       align-items: center;
@@ -409,7 +493,7 @@
     .od-date {
       font-size: 11px;
       line-height: 1.3;
-      color: #c9705f;
+      color: var(--danger-ink);
       letter-spacing: 0.03em;
     }
     .act {
@@ -460,7 +544,49 @@
       cursor: pointer;
       padding: 4px 2px;
     }
-    .link:hover { color: #d9bd80; text-decoration: underline; }
+    .link:hover { color: var(--gold-deep); text-decoration: underline; }
+
+    /* ---------- Day 9：触控目标与窄屏 ---------- */
+    /* 视觉尺寸不变，用透明伪元素把可点区域撑到 44px（WCAG 2.5.5 / HIG 建议值） */
+    .dot::after,
+    .del::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 44px;
+      height: 44px;
+    }
+    /* 触屏下把输入框和操作按钮抬到 44px 高，指头点得准 */
+    @media (pointer: coarse) {
+      .add-input,
+      .add-btn,
+      .act { min-height: 44px; }
+      .act { padding: 8px 12px; }
+    }
+    /* 窄屏：提醒表单第二行（时间 + 分钟 + 说明）挤不下时换行，避免横向溢出 */
+    .rem-row { flex-wrap: wrap; }
+    @media (max-width: 380px) {
+      .rem-row .lead-input { width: 76px; }
+      .lead-tip { flex-basis: 100%; text-align: left; }
+    }
+
+    /* ---------- Day 9：键盘焦点可见（WCAG 2.4.7） ---------- */
+    /* 之前只有 .del 和 .add-input 处理过焦点，其余控件全靠浏览器默认环 ——
+       在羊皮纸底色上不够明确，统一成金棕色描边（对底色 7.34:1，远高于 3:1 要求） */
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    a:focus-visible,
+    .link:focus-visible {
+      outline: 2px solid var(--gold-deep);
+      outline-offset: 2px;
+    }
+    /* 尊重系统「减少动态效果」：此前只降级了三处主动效，装饰性过渡一并关掉 */
+    @media (prefers-reduced-motion: reduce) {
+      button, input, select, a, .link, .dot, .del { transition: none; }
+    }
   </style>
 </head>
 <body>
@@ -501,7 +627,7 @@
           <span class="week" id="week"></span>
         </div>
       </div>
-      <div class="progress" id="progress"></div>
+      <div class="progress" id="progress" role="group" aria-label="今日完成进度"></div>
     </header>
 
     <section class="block" id="overdueBlock" hidden>
@@ -509,7 +635,7 @@
       <ul id="overdueList"></ul>
     </section>
 
-    <section class="block">
+    <section class="block" id="todayBlock">
       <h2>今日清单</h2>
       <ul id="todayList"></ul>
       <div class="empty" id="emptyHint" hidden>今天还没有事项，在下面加一条。</div>
@@ -519,29 +645,33 @@
       </form>
     </section>
 
-    <section class="block">
-      <h2>提醒</h2>
-      <ul id="remindList"></ul>
-      <div class="empty" id="remEmpty" hidden>还没有提醒，在下面加一条。</div>
-      <div class="export-row">
-        <button class="act" id="exportBtn" type="button">导出日历 .ics</button>
-        <span class="export-tip" id="exportTip"></span>
+    <details class="block fold" id="remBlock">
+      <summary>
+        <h2>提醒<span class="fold-count" id="remCount" hidden></span></h2>
+      </summary>
+      <div class="fold-body">
+        <ul id="remindList"></ul>
+        <div class="empty" id="remEmpty" hidden>还没有提醒，在下面加一条。</div>
+        <div class="export-row">
+          <button class="act" id="exportBtn" type="button">导出日历 .ics</button>
+          <span class="export-tip" id="exportTip"></span>
+        </div>
+        <form class="rem-form" id="remForm" autocomplete="off">
+          <div class="rem-row">
+            <input class="add-input" id="remTitle" type="text" placeholder="提醒标题…" aria-label="提醒标题">
+            <button class="add-btn" type="submit" aria-label="添加提醒">+</button>
+          </div>
+          <div class="rem-row">
+            <input class="add-input" id="remAt" type="datetime-local" aria-label="事件时间">
+            <input class="add-input lead-input" id="remLead" type="number" min="0" step="5" value="0" aria-label="提前分钟数">
+            <span class="lead-tip">分钟前</span>
+          </div>
+        </form>
       </div>
-      <form class="rem-form" id="remForm" autocomplete="off">
-        <div class="rem-row">
-          <input class="add-input" id="remTitle" type="text" placeholder="提醒标题…" aria-label="提醒标题">
-          <button class="add-btn" type="submit" aria-label="添加提醒">+</button>
-        </div>
-        <div class="rem-row">
-          <input class="add-input" id="remAt" type="datetime-local" aria-label="事件时间">
-          <input class="add-input lead-input" id="remLead" type="number" min="0" step="5" value="0" aria-label="提前分钟数">
-          <span class="lead-tip">分钟前</span>
-        </div>
-      </form>
-    </section>
+    </details>
 
     <div class="mascot">
-      <img src="assets/mascot.jpg" alt="同行的小兵">
+      <img src="assets/mascot.png" alt="同行的小兵">
       <div class="mascot-bubble">
         <span class="mascot-name">SCOUT</span>
         <span class="mascot-line" id="mascotLine"></span>
@@ -677,7 +807,16 @@
       var todays = state.items.filter(function (i) { return i.date === today; });
       var done = todays.filter(function (i) { return i.done; }).length;
       var progressEl = document.getElementById('progress');
-      progressEl.innerHTML = '<span class="pg"><i>完成</i>' + done + '/' + todays.length + '</span>';
+      var allDone = todays.length > 0 && done === todays.length;
+      progressEl.className = 'progress' + (allDone ? ' is-done' : '');
+      progressEl.innerHTML =
+        '<span class="pg">' +
+          '<span class="pg-num">' + done +
+            '<span class="pg-tot">/' + todays.length + '</span>' +
+          '</span>' +
+          '<span class="pg-label">完成</span>' +
+        '</span>' +
+        '<span class="pg-track"><i></i></span>';
       progressEl.style.setProperty('--pct',
         todays.length ? Math.round(done / todays.length * 100) + '%' : '0%');
 
@@ -725,6 +864,12 @@
       var views = remindViews();
       ul.innerHTML = '';
       document.getElementById('remEmpty').hidden = views.length > 0;
+
+      // 折叠状态下列表是看不见的，所以待办条数必须写在标题上
+      var pending = views.filter(function (v) { return !v.r.done; }).length;
+      var cnt = document.getElementById('remCount');
+      cnt.textContent = pending ? String(pending) : '';
+      cnt.hidden = pending === 0;
 
       views.forEach(function (v) {
         var r = v.r;
@@ -782,6 +927,12 @@
         ? '没有可导出的提醒（已完成、已过期的不进日历）'
         : '可导出 ' + n + ' 条 · 改了提醒要重新导出导入一次';
 
+      // 到点的提醒不能藏在折叠里；但只自动开一次，否则用户手动收起后又被弹开
+      if (!remAutoOpened && views.some(function (v) { return v.hi; })) {
+        remAutoOpened = true;
+        document.getElementById('remBlock').open = true;
+      }
+
       // 供定时器比对：只有状态真变了才重绘（避免每半分钟闪一下）
       lastSig = views.map(function (v) {
         return v.r.id + (v.hi ? '!' : '') + (v.past ? '~' : '') + (v.r.done ? '#' : '');
@@ -789,6 +940,19 @@
     }
 
     var lastSig = '';
+    var remAutoOpened = false;
+
+    // 提醒区的折叠状态单独存一个 key —— 不进 state，也就不影响数据 schema 和 .ics 导出
+    var REM_OPEN_KEY = 'habit.rem.open';
+    function initRemFold() {
+      var el = document.getElementById('remBlock');
+      var saved = null;
+      try { saved = localStorage.getItem(REM_OPEN_KEY); } catch (e) {}
+      if (saved === '1') el.open = true;                 // 上次是展开的就保持展开
+      el.addEventListener('toggle', function () {
+        try { localStorage.setItem(REM_OPEN_KEY, el.open ? '1' : '0'); } catch (e) {}
+      });
+    }
 
     // ---------- 日历导出（F6）----------
     // 只导「未完成 且 事件时间还没到」—— 已过期/已完成的进了日历也不会响（F6.1 / F6.4）
@@ -1088,6 +1252,7 @@
       boot();
     });
 
+    initRemFold();
     boot();
   </script>
 </body>
