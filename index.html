@@ -324,6 +324,9 @@
     }
     li:last-child { border-bottom: none; }
     li:hover { background: rgba(0, 0, 0, 0.04); border-left-color: var(--accent); }
+    /* 整行可点：手指落在行内任何位置都算「勾一下」，不必精准戳中 22px 的方框 */
+    #todayList li { cursor: pointer; -webkit-tap-highlight-color: rgba(163, 53, 42, 0.12); }
+    #todayList li:active { background: rgba(163, 53, 42, 0.10); }
     .dot {
       position: relative;
       flex: none;
@@ -1131,6 +1134,11 @@
 
         dot.addEventListener('click', function () { toggleItem(item.id); });
         del.addEventListener('click', function () { removeItem(item.id); });
+        // 整行可点：方框和删除键各自处理，行内其余位置点下去都算「勾一下」
+        li.addEventListener('click', function (e) {
+          if (e.target.closest('.dot') || e.target.closest('.del')) return;
+          toggleItem(item.id);
+        });
 
         li.appendChild(dot);
         li.appendChild(title);
