@@ -24,6 +24,8 @@
       /* hover 态要比常态更深，不能更浅 */
       --gold-deep: #5c4823;
       --soft-deep: #57523f;
+      /* 深墨底撤销条上的金字。#7a6130 在深色上只有 2.1:1，这里 7.2:1 */
+      --gold-on-dark: #d9b25c;
     }
     * { box-sizing: border-box; }
     html { -webkit-text-size-adjust: 100%; }
@@ -575,6 +577,60 @@
       .lead-tip { flex-basis: 100%; text-align: left; }
     }
 
+    /* ---------- Day 11：删除后的撤销条（反馈层③「可以反悔」） ---------- */
+    /* 深墨底 + 金字，跟页面上任何一块都不一样：它是盖在界面之上的临时层，不能假装是内容 */
+    .undo {
+      position: fixed;
+      left: 50%;
+      bottom: 20px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      width: max-content;
+      max-width: calc(100vw - 32px);
+      padding: 10px 10px 10px 16px;
+      border-radius: 3px;
+      background: var(--ink);
+      color: var(--card-2);
+      box-shadow: 0 8px 22px rgba(30, 25, 12, 0.34);
+      font-size: 13px;
+      letter-spacing: 0.03em;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translate(-50%, 12px);
+      transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
+    }
+    .undo.show {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: translate(-50%, 0);
+    }
+    .undo-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .undo-btn {
+      flex: none;
+      min-height: 36px;                 /* 浮层总高限制下的折衷；宽的那一维够手指落 */
+      padding: 0 10px;
+      border: none;
+      border-radius: 2px;
+      background: none;
+      color: var(--gold-on-dark);
+      font: inherit;
+      font-size: 13px;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      -webkit-tap-highlight-color: rgba(217, 178, 92, 0.2);
+    }
+    .undo-btn:hover { background: rgba(217, 178, 92, 0.14); }
+    /* 全局焦点环用的是深金 #5c4823，压在深墨底上等于看不见，这里换成亮的那支 */
+    .undo-btn:focus-visible { outline-color: var(--gold-on-dark); }
+    @media (prefers-reduced-motion: reduce) {
+      .undo { transition: none; }
+      .undo { transform: translate(-50%, 0); }
+    }
+
     /* ---------- Day 9：键盘焦点可见（WCAG 2.4.7） ---------- */
     /* 之前只有 .del 和 .add-input 处理过焦点，其余控件全靠浏览器默认环 ——
        在羊皮纸底色上不够明确，统一成金棕色描边（对底色 7.34:1，远高于 3:1 要求） */
@@ -686,6 +742,12 @@
       <button class="link" id="clearSeed" hidden>清空示例</button>
     </footer>
   </main>
+
+  <!-- Day 11：删除后的退路。刻意放在 .app 之外，列表重绘不会把它一起刷掉 -->
+  <div class="undo" id="undoBar" role="status" aria-live="polite" aria-hidden="true">
+    <span class="undo-text" id="undoText"></span>
+    <button class="undo-btn" id="undoBtn" type="button">撤销</button>
+  </div>
 
   <script>
     // ---------- 存储层（F4）----------
@@ -1159,10 +1221,54 @@
     }
 
     function removeItem(id) {
-      state.items = state.items.filter(function (i) { return i.id !== id; });
+      var index = -1;
+      state.items.forEach(function (i, n) { if (i.id === id) index = n; });
+      if (index < 0) return;
+      // 删之前先记住「删的是谁、它原本排第几」——撤销要放回原位，不是补到末尾
+      pendingUndo = { item: state.items[index], index: index };
+      state.items.splice(index, 1);
+      save();
+      render();
+      showUndo('已删除「' + pendingUndo.item.title + '」');
+    }
+
+    // ---------- 撤销条：反馈层③「可以反悔」 ----------
+    // 删除是这个页面上唯一没法回头的操作。Day 10 把整行改成可点之后，手指落在行里时
+    // ✕ 就在手边，误触概率反而高了 —— 退路必须补上，不然每次点错都是真的丢一条。
+    var UNDO_MS = 4000;                 // 撤销条的停留时长
+    var pendingUndo = null;             // { item, index }：一次只挂一笔，删新的会顶掉旧的
+    var undoTimer = null;
+
+    var undoBar = document.getElementById('undoBar');
+    var undoText = document.getElementById('undoText');
+    var undoBtn = document.getElementById('undoBtn');
+
+    function showUndo(msg) {
+      undoText.textContent = msg;
+      undoBar.classList.add('show');
+      undoBar.setAttribute('aria-hidden', 'false');
+      clearTimeout(undoTimer);
+      undoTimer = setTimeout(hideUndo, UNDO_MS);
+    }
+
+    function hideUndo() {
+      clearTimeout(undoTimer);
+      undoTimer = null;
+      pendingUndo = null;               // 过期作废：原件已经丢掉，再也回不来了
+      undoBar.classList.remove('show');
+      undoBar.setAttribute('aria-hidden', 'true');
+    }
+
+    function undoRemove() {
+      if (!pendingUndo) return;
+      var at = Math.min(pendingUndo.index, state.items.length);
+      state.items.splice(at, 0, pendingUndo.item);
+      hideUndo();                       // 机会用掉了，顺手把计时器和浮层收干净
       save();
       render();
     }
+
+    undoBtn.addEventListener('click', undoRemove);
 
     function addItem(title) {
       state.items.push({
