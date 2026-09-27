@@ -264,6 +264,34 @@
     #todayBlock h2::after {
       background: linear-gradient(90deg, var(--olive), rgba(0, 0, 0, 0));
     }
+    /* Day 12：筛选条 —— 三个互斥条件。选中态用军绿实底，保持「军绿=结构性元素」的分工 */
+    .filter {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .filter-btn {
+      flex: 1;
+      padding: 6px 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+    }
+    .filter-btn.is-on {
+      background: var(--olive);
+      border-color: var(--olive);
+      color: #f5f1e4;
+      font-weight: 700;
+    }
+    .filter-btn:focus-visible {
+      outline: 2px solid var(--gold-deep);
+      outline-offset: 2px;
+    }
     #overdueBlock h2 { color: var(--danger-ink); }
     /* 提醒区默认折叠 —— 它比主角还重，但不是每天都用。标题压浅，让位给今日清单 */
     .fold > summary {
@@ -696,8 +724,14 @@
 
     <section class="block" id="todayBlock">
       <h2>今日清单</h2>
+      <div class="filter" id="filterBar" role="group" aria-label="筛选今日清单">
+        <button class="filter-btn is-on" type="button" data-f="all" aria-pressed="true">全部</button>
+        <button class="filter-btn" type="button" data-f="open" aria-pressed="false">未完成</button>
+        <button class="filter-btn" type="button" data-f="done" aria-pressed="false">已完成</button>
+      </div>
       <ul id="todayList"></ul>
       <div class="empty" id="emptyHint" hidden>今天还没有事项，在下面加一条。</div>
+      <div class="empty" id="filterEmpty" hidden>没有符合筛选条件的项。</div>
       <form class="add" id="addForm" autocomplete="off">
         <input class="add-input" id="addInput" type="text" placeholder="添加一项…" aria-label="添加事项">
         <button class="add-btn" type="submit" aria-label="添加">+</button>
@@ -861,6 +895,30 @@
     // ---------- 渲染 ----------
     var WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
+    // ---------- 筛选（Day 12）----------
+    // filterMode: 'all' | 'open' | 'done'。只作用于今日清单的显示，
+    // 进度条 / 看板娘台词仍按全天算 —— 筛选是「看」的工具，不改「账」。
+    var filterMode = 'all';
+
+    function applyFilter(list) {
+      if (filterMode === 'open') return list.filter(function (i) { return !i.done; });
+      if (filterMode === 'done') return list.filter(function (i) { return i.done; });
+      return list;
+    }
+
+    var filterBar = document.getElementById('filterBar');
+    filterBar.addEventListener('click', function (e) {
+      var btn = e.target.closest('.filter-btn');
+      if (!btn) return;
+      filterMode = btn.getAttribute('data-f');
+      Array.prototype.forEach.call(filterBar.children, function (b) {
+        var on = b === btn;
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');   // 读屏器能知道当前停在哪个条件
+      });
+      render();
+    });
+
     function render() {
       var today = todayStr();
       var d = new Date();
@@ -892,8 +950,13 @@
 
       document.getElementById('mascotLine').textContent = mascotLine(todays.length, done, overdue.length);
 
+      // 空态两条腿：今天压根没加事项 → emptyHint；加了但当前筛不出来 → filterEmpty
+      var shown = applyFilter(todays);
+      document.getElementById('emptyHint').hidden = todays.length !== 0;
+      document.getElementById('filterEmpty').hidden = !(todays.length > 0 && shown.length === 0);
+
       renderOverdue(overdue, today);
-      renderToday(todays);
+      renderToday(shown);
       renderReminders();
       document.getElementById('clearSeed').hidden = !state.seeded;
     }
@@ -1173,7 +1236,7 @@
     function renderToday(list) {
       var ul = document.getElementById('todayList');
       ul.innerHTML = '';
-      document.getElementById('emptyHint').hidden = list.length > 0;
+      // 空态提示由 render() 统一管理：筛选模式下必须区分「今天没事项」和「筛完没有」
 
       list.forEach(function (item) {
         var li = document.createElement('li');
