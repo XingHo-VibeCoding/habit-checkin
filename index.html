@@ -292,6 +292,35 @@
       outline: 2px solid var(--gold-deep);
       outline-offset: 2px;
     }
+    /* Day 13：视图切换标签 —— 跟筛选条同一套军绿选中态，但它是页级导航，分量更重一档 */
+    .tabs {
+      display: flex;
+      gap: 6px;
+      margin: 6px 0 2px;
+    }
+    .tab {
+      flex: 1;
+      padding: 8px 0;
+      border: 1px solid var(--line);
+      border-bottom-width: 2px;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+    }
+    .tab.is-on {
+      background: var(--olive);
+      border-color: var(--olive);
+      color: #f5f1e4;
+      font-weight: 700;
+    }
+    .tab:focus-visible {
+      outline: 2px solid var(--gold-deep);
+      outline-offset: 2px;
+    }
     #overdueBlock h2 { color: var(--danger-ink); }
     /* 提醒区默认折叠 —— 它比主角还重，但不是每天都用。标题压浅，让位给今日清单 */
     .fold > summary {
@@ -433,7 +462,7 @@
     .add-btn:hover { background: rgba(138, 111, 55, 0.16); }
     /* 状态视图：错误 */
     .state-view { display: none; text-align: center; padding: 30px 12px 24px; }
-    body.is-error .app > *:not(.state-view) { display: none !important; }
+    body.is-error .app > *:not(.state-view):not(.tabs):not(.corps-bar) { display: none !important; }
     body.is-error .state-view { display: block; }
     .state-icon {
       width: 46px;
@@ -461,7 +490,9 @@
 
     /* 加载态：骨架屏 */
     .skeleton { display: none; }
-    body.is-loading .app > *:not(.skeleton) { display: none !important; }
+    /* Day 13：加载 / 错误是「数据」的状态，不是「页面」的状态 ——
+       所以切视图的标签栏保留：你知道自己在哪，也还能切走，只有视图区被替换掉 */
+    body.is-loading .app > *:not(.skeleton):not(.tabs):not(.corps-bar) { display: none !important; }
     body.is-loading .skeleton { display: block; padding: 4px 0 10px; }
     .sk {
       height: 13px;
@@ -678,19 +709,6 @@
 </head>
 <body>
   <main class="app">
-    <div class="skeleton" id="skeleton" aria-hidden="true">
-      <div class="sk sk-head"></div>
-      <div class="sk"></div>
-      <div class="sk"></div>
-      <div class="sk"></div>
-      <div class="sk"></div>
-    </div>
-    <div class="state-view" id="errorView">
-      <div class="state-icon" aria-hidden="true">!</div>
-      <div class="state-title">数据没能读出来</div>
-      <div class="state-desc" id="errorMsg"></div>
-      <button class="act" id="retryBtn" type="button">重试</button>
-    </div>
     <div class="corps-bar"><span>调查兵团 · 每日任务</span></div>
     <header class="head">
       <div class="brand">
@@ -717,7 +735,28 @@
       <div class="progress" id="progress" role="group" aria-label="今日完成进度"></div>
     </header>
 
-    <section class="block" id="overdueBlock" hidden>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="视图切换">
+      <button class="tab is-on" type="button" data-v="today" role="tab" aria-selected="true">今日清单</button>
+      <button class="tab" type="button" data-v="reminders" role="tab" aria-selected="false">提醒</button>
+      <button class="tab" type="button" data-v="done" role="tab" aria-selected="false">已完成</button>
+    </nav>
+
+    <div class="skeleton" id="skeleton" aria-hidden="true">
+      <div class="sk sk-head"></div>
+      <div class="sk"></div>
+      <div class="sk"></div>
+      <div class="sk"></div>
+      <div class="sk"></div>
+    </div>
+    <div class="state-view" id="errorView">
+      <div class="state-icon" aria-hidden="true">!</div>
+      <div class="state-title">数据没能读出来</div>
+      <div class="state-desc" id="errorMsg"></div>
+      <button class="act" id="retryBtn" type="button">重试</button>
+    </div>
+
+    <div class="view" id="viewToday">
+      <section class="block" id="overdueBlock" hidden>
       <h2>逾期 <span id="overdueCount"></span></h2>
       <ul id="overdueList"></ul>
     </section>
@@ -727,7 +766,6 @@
       <div class="filter" id="filterBar" role="group" aria-label="筛选今日清单">
         <button class="filter-btn is-on" type="button" data-f="all" aria-pressed="true">全部</button>
         <button class="filter-btn" type="button" data-f="open" aria-pressed="false">未完成</button>
-        <button class="filter-btn" type="button" data-f="done" aria-pressed="false">已完成</button>
       </div>
       <ul id="todayList"></ul>
       <div class="empty" id="emptyHint" hidden>今天还没有事项，在下面加一条。</div>
@@ -738,11 +776,12 @@
       </form>
     </section>
 
-    <details class="block fold" id="remBlock">
-      <summary>
+    </div>
+
+    <div class="view" id="viewReminders" hidden>
+      <section class="block" id="remBlock">
         <h2>提醒<span class="fold-count" id="remCount" hidden></span></h2>
-      </summary>
-      <div class="fold-body">
+        <div class="fold-body">
         <ul id="remindList"></ul>
         <div class="empty" id="remEmpty" hidden>还没有提醒，在下面加一条。</div>
         <div class="export-row">
@@ -760,8 +799,17 @@
             <span class="lead-tip">分钟前</span>
           </div>
         </form>
-      </div>
-    </details>
+        </div>
+      </section>
+    </div>
+
+    <div class="view" id="viewDone" hidden>
+      <section class="block" id="doneBlock">
+        <h2>已完成</h2>
+        <ul id="doneList"></ul>
+        <div class="empty" id="doneEmpty" hidden>还没有完成过的事项，去清单里勾掉一条。</div>
+      </section>
+    </div>
 
     <div class="mascot">
       <img src="assets/mascot.png" alt="同行的小兵">
@@ -895,14 +943,46 @@
     // ---------- 渲染 ----------
     var WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
+    // ---------- 视图路由（Day 13）----------
+    // 三个视图是同一份 DOM，切换只是改谁 hidden。好处：切走再切回，谁的输入框里
+    // 打了字、筛选停在哪个条件，全都还在 —— 不用自己存现场。
+    var VIEWS = { today: 'viewToday', reminders: 'viewReminders', done: 'viewDone' };
+
+    function currentView() {
+      var v = location.hash.replace(/^#\/?/, '');
+      return VIEWS[v] ? v : 'today';          // 认不出的 hash 一律回今日清单
+    }
+
+    function applyRoute() {
+      var v = currentView();
+      Object.keys(VIEWS).forEach(function (name) {
+        document.getElementById(VIEWS[name]).hidden = (name !== v);
+      });
+      Array.prototype.forEach.call(document.getElementById('tabs').children, function (b) {
+        var on = b.getAttribute('data-v') === v;
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');   // 读屏器知道当前在第几个视图
+      });
+    }
+
+    document.getElementById('tabs').addEventListener('click', function (e) {
+      var btn = e.target.closest('.tab');
+      if (!btn) return;
+      location.hash = '#/' + btn.getAttribute('data-v');          // 改地址 → 交给 hashchange 处理
+    });
+
+    window.addEventListener('hashchange', applyRoute);
+    // 首次进来没有 hash：补一个，地址栏立刻显示当前在哪个视图（截图也靠它）
+    if (!location.hash) history.replaceState(null, '', location.pathname + location.search + '#/today');
+    applyRoute();
+
     // ---------- 筛选（Day 12）----------
-    // filterMode: 'all' | 'open' | 'done'。只作用于今日清单的显示，
-    // 进度条 / 看板娘台词仍按全天算 —— 筛选是「看」的工具，不改「账」。
+    // filterMode: 'all' | 'open'。曾经这里还有个「已完成」，Day 13 删了 ——
+    // 已完成归到独立视图，筛选条的活只是在「今天要干的活」里收窄一下，两边不重叠。
     var filterMode = 'all';
 
     function applyFilter(list) {
       if (filterMode === 'open') return list.filter(function (i) { return !i.done; });
-      if (filterMode === 'done') return list.filter(function (i) { return i.done; });
       return list;
     }
 
@@ -958,6 +1038,7 @@
       renderOverdue(overdue, today);
       renderToday(shown);
       renderReminders();
+      renderDone();
       document.getElementById('clearSeed').hidden = !state.seeded;
     }
 
@@ -1272,6 +1353,52 @@
       });
     }
 
+    // ---------- 已完成视图（Day 13）----------
+    // 不新增数据结构：从现有 items 里挑 done 的，按完成时间倒序
+    function renderDone() {
+      var ul = document.getElementById('doneList');
+      ul.innerHTML = '';
+      var doneItems = state.items
+        .filter(function (i) { return i.done; })
+        .sort(function (a, b) { return (b.doneAt || '') < (a.doneAt || '') ? -1 : 1; });
+      document.getElementById('doneEmpty').hidden = doneItems.length > 0;
+
+      doneItems.forEach(function (item) {
+        var li = document.createElement('li');
+        li.className = 'done';
+
+        var dot = document.createElement('button');
+        dot.className = 'dot on';
+        dot.textContent = '✓';
+        dot.setAttribute('aria-label', '取消完成');
+
+        var main = document.createElement('div');
+        main.className = 'rm-main';
+        var title = document.createElement('span');
+        title.className = 'title';
+        title.textContent = item.title;
+        var meta = document.createElement('span');
+        meta.className = 'rm-meta';
+        meta.textContent = item.doneAt ? fmtTime(new Date(item.doneAt)) + ' 完成' : '已完成';
+        main.appendChild(title);
+        main.appendChild(meta);
+
+        var del = document.createElement('button');
+        del.className = 'del';
+        del.textContent = '✕';
+        del.title = '删除';
+        del.setAttribute('aria-label', '删除');
+
+        dot.addEventListener('click', function () { toggleItem(item.id); });
+        del.addEventListener('click', function () { removeItem(item.id); });
+
+        li.appendChild(dot);
+        li.appendChild(main);
+        li.appendChild(del);
+        ul.appendChild(li);
+      });
+    }
+
     function toggleItem(id) {
       state.items.forEach(function (i) {
         if (i.id === id) {
@@ -1424,7 +1551,8 @@
       // 先把强制失败开关摘掉，否则点了重试还是失败，看着像坏了
       if (FORCE_STATE === 'error') {
         FORCE_STATE = null;
-        history.replaceState(null, '', location.pathname);
+        // 摘掉强制失败的开关（query），但保留 hash —— 在哪儿失败就在哪儿重试，别把人踢回第一个视图
+        history.replaceState(null, '', location.pathname + location.hash);
       }
       boot();
     });
