@@ -6,19 +6,28 @@
   <title>每日打卡清单</title>
   <style>
     :root {
+      /* ---------- 表面与墨色 ---------- */
       --card-1: #faf6ec;
       --card-2: #f2ebda;
       --ink: #2c2a22;
       --muted: #6a6658;
       /* 原 #ddd4bf 与卡片明度只差 11.8，弱光下几乎看不见；加深到差 20.0 */
+      /* 纯装饰分隔线：1.57:1。WCAG 1.4.11 只约束"识别控件所必需的边界"，
+         分隔线属装饰，刻意保持轻盈不抢内容 */
       --line: #c9bda2;
       --row-line: #e9e2d0;
+      /* 控件边界线：3.52:1，达 WCAG 1.4.11 的 3:1。原来跟 --line 共用一条，
+         未勾选的方框在卡片上只有 1.60:1 —— 控件看不见，等于点不准 */
+      --line-strong: #857b66;
       --accent: #a3352a;
       /* 军绿：第二个色相家族（88°），管结构性元素。原来整页只有 40-48° 一个黄褐家族，视觉太平 */
       --olive: #5c6650;
+      --olive-deep: #4b5442;   /* 选中态底色。铁律：选中/hover 必须比常态更深 */
+      --on-olive: #f5f1e4;     /* 军绿底上的文字 7.02:1 */
       --gold: #7a6130;
       --gold-dim: #8f7a4a;
       --soft: #6c6656;
+      --surface-sunk: rgba(255, 255, 255, 0.62);  /* 内凹面：输入框、勾选框 */
       /* Day 9 审查后新增：原 #c9705f 在卡片底色上只有 2.96:1，不达 WCAG AA 4.5:1 */
       --danger-ink: #9e4636;
       /* hover 态要比常态更深，不能更浅 */
@@ -26,6 +35,28 @@
       --soft-deep: #57523f;
       /* 深墨底撤销条上的金字。#7a6130 在深色上只有 2.1:1，这里 7.2:1 */
       --gold-on-dark: #d9b25c;
+
+      /* ---------- 字体（零外部请求：PRD C2 禁止外链，只能用系统自带） ---------- */
+      /* 展示字走衬线：碑刻 / 档案气质。iOS→Songti SC，Windows→SimSun，安卓→Noto Serif CJK，
+         三端系统自带无需下载，不违反 C2。只用于大字号（日期、完成度），小字仍用无衬线 */
+      --font-display: "Songti SC", "SimSun", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", serif;
+      --font-body: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+
+      /* ---------- 间距梯度（4 / 8 / 12 / 16 / 24 / 40） ---------- */
+      --space-1: 4px; --space-2: 8px; --space-3: 12px;
+      --space-4: 16px; --space-5: 24px; --space-6: 40px;
+
+      /* ---------- 圆角 ---------- */
+      --radius-sm: 2px; --radius-md: 3px; --radius-pill: 999px;
+
+      /* ---------- 阴影三级（Y 偏移 2 / 8 / 24，带环境色而非纯黑） ---------- */
+      --shadow-1: 0 2px 6px rgba(70, 58, 34, 0.10);
+      --shadow-2: 0 8px 22px rgba(70, 58, 34, 0.18);
+      --shadow-3: 0 14px 34px rgba(70, 58, 34, 0.14);
+
+      /* ---------- 动效 ---------- */
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+      --dur-fast: 160ms; --dur-base: 300ms; --dur-slow: 640ms;
     }
     * { box-sizing: border-box; }
     html { -webkit-text-size-adjust: 100%; }
@@ -34,9 +65,11 @@
       padding: 20px 16px 32px;
       min-height: 100vh;
       color: var(--ink);
-      font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-family: var(--font-body);
       font-size: 15px;
-      line-height: 1.5;
+      /* 中文正文行高规范值 ≥1.7，这里是紧凑清单工具，取 1.6 折衷：
+         再高会把列表撑长，违反「打开到勾完 ≤10 秒」的 A1 判据 */
+      line-height: 1.6;
       background:
         radial-gradient(900px 500px at 50% -5%, #fffdf6 0%, rgba(0, 0, 0, 0) 70%),
         linear-gradient(180deg, #f4eddd 0%, #e6dec9 100%);
@@ -68,11 +101,24 @@
       z-index: 1;
       max-width: 520px;
       margin: 0 auto;
-      padding: 22px 16px 10px;
-      border-radius: 3px;
+      padding: 22px var(--space-4) 10px;
+      border-radius: var(--radius-md);
       background: linear-gradient(180deg, var(--card-1), var(--card-2));
       border: 1px solid var(--line);
-      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 14px 34px rgba(70, 58, 34, 0.14);
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), var(--shadow-3);
+    }
+    /* 纸颗粒：内联 SVG 噪点（data-URI，不产生任何网络请求，符合 PRD 的 C2）。
+       4.5% 透明度叠在卡片上，平涂底色因此有了实物感。
+       关掉方式：删掉 .app::after 这段 */
+    .app::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      pointer-events: none;
+      border-radius: inherit;
+      opacity: 0.045;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
     }
     /* 顶部警示斜纹条 */
     .app::before {
@@ -180,11 +226,11 @@
     }
     .mascot-line { font-size: 13.5px; line-height: 1.5; color: var(--ink); }
     .date {
-      font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      font-size: 21px;
+      font-family: var(--font-display);
+      font-size: 22px;
       font-weight: 700;
-      letter-spacing: 0.02em;
-      line-height: 1.2;
+      letter-spacing: 0.01em;
+      line-height: 1.15;
       font-variant-numeric: lining-nums tabular-nums;
     }
     .week {
@@ -207,10 +253,11 @@
     }
     .progress .pg { display: flex; align-items: baseline; gap: 5px; }
     .pg-num {
-      font-size: 30px;
+      font-family: var(--font-display);
+      font-size: 32px;
       font-weight: 700;
       line-height: 1;
-      letter-spacing: 0.01em;
+      letter-spacing: -0.01em;
     }
     .pg-tot { font-size: 15px; font-weight: 600; color: var(--muted); }
     .pg-label {
@@ -264,62 +311,89 @@
     #todayBlock h2::after {
       background: linear-gradient(90deg, var(--olive), rgba(0, 0, 0, 0));
     }
-    /* Day 12：筛选条 —— 三个互斥条件。选中态用军绿实底，保持「军绿=结构性元素」的分工 */
+    /* Day 12：筛选条 —— Day 13 后只剩两个互斥条件（「已完成」归到独立视图）。
+       形状刻意做成「靠左的小药丸」：上面平分整行的那一排是页级导航（.tab），
+       这两个小的是视图内的辅助条件。宽度和形状先把层级拉开，颜色就不用再喊了 */
     .filter {
       display: flex;
-      gap: 6px;
-      margin-bottom: 10px;
+      gap: var(--space-2);
+      margin-bottom: var(--space-3);
     }
     .filter-btn {
-      flex: 1;
-      padding: 6px 0;
-      border: 1px solid var(--line);
-      border-radius: 8px;
+      flex: none;
+      padding: 5px 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-pill);
       background: transparent;
       color: var(--muted);
       font: inherit;
-      font-size: 12px;
+      font-size: 11.5px;
       letter-spacing: 0.06em;
       cursor: pointer;
+      transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
     }
+    .filter-btn:hover { background: rgba(92, 102, 80, 0.09); color: var(--olive); }
     .filter-btn.is-on {
       background: var(--olive);
       border-color: var(--olive);
-      color: #f5f1e4;
+      color: var(--on-olive);
       font-weight: 700;
     }
     .filter-btn:focus-visible {
       outline: 2px solid var(--gold-deep);
       outline-offset: 2px;
     }
-    /* Day 13：视图切换标签 —— 跟筛选条同一套军绿选中态，但它是页级导航，分量更重一档 */
+    /* Day 13：视图切换标签 —— 档案页签。方角 + 平分整行 + 选中态比筛选条再深一档
+       （--olive-deep）。跟下面那排靠左的小药丸一眼分开：整行的是换页，小圆的是筛选 */
     .tabs {
       display: flex;
-      gap: 6px;
-      margin: 6px 0 2px;
+      gap: var(--space-2);
+      margin: var(--space-2) 0 var(--space-1);
     }
     .tab {
       flex: 1;
       padding: 8px 0;
       border: 1px solid var(--line);
       border-bottom-width: 2px;
-      border-radius: 8px;
-      background: transparent;
+      border-radius: var(--radius-sm);
+      background: rgba(0, 0, 0, 0.02);
       color: var(--muted);
       font: inherit;
       font-size: 13px;
       letter-spacing: 0.08em;
       cursor: pointer;
+      transition: background var(--dur-fast) ease, color var(--dur-fast) ease,
+                  border-color var(--dur-fast) ease;
     }
+    .tab:hover { background: rgba(92, 102, 80, 0.09); color: var(--olive); }
     .tab.is-on {
-      background: var(--olive);
-      border-color: var(--olive);
-      color: #f5f1e4;
+      background: var(--olive-deep);
+      border-color: var(--olive-deep);
+      color: var(--on-olive);
       font-weight: 700;
     }
     .tab:focus-visible {
       outline: 2px solid var(--gold-deep);
       outline-offset: 2px;
+    }
+    /* ---------- 动效编排 ---------- */
+    /* 一次编排好的入场序列：招牌 → 页头 → 页签，组间隔 90ms（规范值 60–120ms）。
+       只动 opacity 与 transform，不触发重排，不拖慢首屏 —— A1 十秒判据优先 */
+    .corps-bar, .head, .tabs {
+      animation: rise var(--dur-base) var(--ease-out) both;
+    }
+    .head { animation-delay: 90ms; }
+    .tabs { animation-delay: 180ms; }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: none; }
+    }
+    /* 视图切换：场景级过渡。元素从 hidden 变为显示时 display 由 none 变 block，
+       animation 会自行重放，不需要 JS 额外加类 */
+    .view { animation: view-in var(--dur-base) var(--ease-out) both; }
+    @keyframes view-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: none; }
     }
     #overdueBlock h2 { color: var(--danger-ink); }
     /* 提醒区默认折叠 —— 它比主角还重，但不是每天都用。标题压浅，让位给今日清单 */
@@ -391,9 +465,10 @@
       flex: none;
       width: 22px;
       height: 22px;
-      border: 2px solid #c3bca7;
+      /* 原 #c3bca7 只有 1.60:1 —— 方框看不见就不知道往哪戳。换 --line-strong 达 3.52:1 */
+      border: 2px solid var(--line-strong);
       border-radius: 2px;
-      background: rgba(255, 255, 255, 0.62);
+      background: var(--surface-sunk);
       color: var(--ink);
       font-size: 13px;
       line-height: 1;
@@ -432,10 +507,10 @@
     .add-input {
       flex: 1;
       min-width: 0;
-      padding: 10px 12px;
-      background: rgba(255, 255, 255, 0.62);
-      border: 1px solid var(--line);
-      border-radius: 2px;
+      padding: 10px var(--space-3);
+      background: var(--surface-sunk);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
       color: var(--ink);
       font-family: inherit;
       font-size: 14px;
@@ -627,7 +702,9 @@
       .add-input,
       .add-btn,
       .act { min-height: 44px; }
-      .act { padding: 8px 12px; }
+      .act { padding: 8px var(--space-3); }
+      /* 页签与筛选条同样抬到 44px：它们是全页点击频率最高的控件（WCAG 2.5.5） */
+      .tab, .filter-btn { min-height: 44px; }
     }
     /* 窄屏：提醒表单第二行（时间 + 分钟 + 说明）挤不下时换行，避免横向溢出 */
     .rem-row { flex-wrap: wrap; }
@@ -703,7 +780,9 @@
     }
     /* 尊重系统「减少动态效果」：此前只降级了三处主动效，装饰性过渡一并关掉 */
     @media (prefers-reduced-motion: reduce) {
-      button, input, select, a, .link, .dot, .del { transition: none; }
+      button, input, select, a, .link, .dot, .del, .tab, .filter-btn { transition: none; }
+      /* 入场序列与视图过渡一并关掉（只关过渡不够，动画本身也得停） */
+      .corps-bar, .head, .tabs, .view { animation: none; }
     }
   </style>
 </head>
