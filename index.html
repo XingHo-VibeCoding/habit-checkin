@@ -1031,7 +1031,14 @@
       }
     }
 
+    // 演示态（?state=mock / ?state=empty）一律不写盘。
+    // boot() 里已经挡了一次「进来就写」，但增删改这些操作各自还会调 save() ——
+    // 只要漏掉这一道，在演示态里加一条就会把假数据写进真实存储，把真数据整个顶掉，
+    // 而且是静默的：页面上看着一切正常，刷新之后真实数据已经没了。
+    function isDemo() { return FORCE_STATE === 'mock' || FORCE_STATE === 'empty'; }
+
     function save() {
+      if (isDemo()) return;
       try {
         localStorage.setItem(KEY, JSON.stringify(state));
       } catch (e) {
@@ -1903,8 +1910,8 @@
       document.body.classList.add('is-loading');
       fetchState().then(function (data) {
         state = data;
-        var isDemo = FORCE_STATE === 'mock' || FORCE_STATE === 'empty';
-        if (!isDemo) save();                              // 演示态不写回，绝不碰真实存储
+        // 演示态不写回，绝不碰真实存储（save() 自己也挡了一道，这里是双保险）
+        if (!isDemo()) save();
         document.body.classList.remove('is-loading');
         render();
       }).catch(function (err) {
