@@ -396,6 +396,54 @@
       to { opacity: 1; transform: none; }
     }
     #overdueBlock h2 { color: var(--danger-ink); }
+    /* ---------- 主屏蓝图：倒数日一行 + 今天的课 ---------- */
+    /* 倒数日：一行，不占块 —— 做成块就会抢主屏。金棕描边跟「逾期/清单」分开，但不抢戏 */
+    .anniv {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-2);
+      margin: var(--space-2) 0 var(--space-3);
+      padding: 5px 10px;
+      border-left: 2px solid var(--gold-dim);
+      background: rgba(138, 111, 55, 0.07);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      color: var(--gold-deep);
+    }
+    .anniv-tag {
+      flex: none;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      color: var(--gold);
+    }
+    .anniv-text { min-width: 0; }
+    /* 今天的课：军绿管结构性元素，跟「今日清单」同族、比它轻一档 */
+    .class-block h2 { color: var(--olive); }
+    .class-block h2::after { background: linear-gradient(90deg, var(--olive), rgba(0, 0, 0, 0)); }
+    .cs-time {
+      flex: none;
+      width: 42px;
+      font-size: 12px;
+      font-variant-numeric: lining-nums tabular-nums;
+      color: var(--muted);
+    }
+    .cs-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .cs-title { font-size: 13px; }
+    .cs-meta { font-size: 11px; color: var(--muted); letter-spacing: 0.03em; }
+    .cs-tip {
+      flex: none;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--gold);
+    }
+    /* 正在上的那节：军绿左侧条 + 浅底，一眼扫到 */
+    li.cs.is-now { background: rgba(92, 102, 80, 0.12); border-left-color: var(--olive); }
+    li.cs.is-now .cs-time { color: var(--olive); }
+    /* 已上完的：用底色弱化，不降透明度（降透明度会掉对比度，Day 9 的老教训） */
+    li.cs.is-past { background: rgba(0, 0, 0, 0.025); }
+    li.cs.is-past .cs-title { color: var(--muted); }
     /* 提醒区默认折叠 —— 它比主角还重，但不是每天都用。标题压浅，让位给今日清单 */
     .fold > summary {
       display: flex;
@@ -835,6 +883,20 @@
     </div>
 
     <div class="view" id="viewToday">
+      <!-- 倒数日 —— 取自滴答清单：只占一行，不占块。做成块就会抢主屏。
+           没有纪念日数据时整条隐藏（占位数据只在 ?state=mock 下出现） -->
+      <div class="anniv" id="annivBar" hidden>
+        <span class="anniv-tag">倒数</span>
+        <span class="anniv-text" id="annivText"></span>
+      </div>
+
+      <!-- 今天的课 —— 取自超级课程表：不只列课，还告诉你正在上 / 还有多久。
+           这一条比整张周历都管用，所以主屏只放今天，全貌留给 #/timetable -->
+      <section class="block class-block" id="classBlock" hidden>
+        <h2>今天的课</h2>
+        <ul id="classList"></ul>
+      </section>
+
       <section class="block" id="overdueBlock" hidden>
       <h2>逾期 <span id="overdueCount"></span></h2>
       <ul id="overdueList"></ul>
@@ -931,9 +993,13 @@
         if (!raw) return null;
         var data = JSON.parse(raw);
         if (!data || !Array.isArray(data.items)) return null;
+        // 老数据（v1）里没有 courses / anniv 这两个字段 —— 按「有没有」补默认值，
+        // 而不是换存储格式。这样升级不会碰到任何一条已有的清单和提醒。
         return {
           items: data.items,
           reminders: Array.isArray(data.reminders) ? data.reminders : [],
+          courses: Array.isArray(data.courses) ? data.courses : [],
+          anniv: Array.isArray(data.anniv) ? data.anniv : [],
           seeded: !!data.seeded
         };
       } catch (e) {
@@ -965,7 +1031,21 @@
         'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
     }
 
-    function mockState() {
+    // 主屏蓝图的两块占位数据（倒数日 / 今天的课）。真实功能排到那天时，把这里换成真数据源。
+    // 时间点刻意用「相对当前」生成 —— 写死钟点的话，换个时间打开就看不到「正在上」的高亮了。
+    function mockHM(offsetMin) {
+      var d = new Date(Date.now() + offsetMin * 60000);
+      return pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    function mockDate(offsetDays) {
+      var d = new Date(Date.now() + offsetDays * 86400000);
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    }
+
+    // withBlueprint=true 才带上蓝图那两块占位数据。首次打开（当种子用）时必须是 false ——
+    // 否则真实用户第一次打开会看到假的「高等数学」和「距期末 23 天」，那是误导不是演示。
+    function mockState(withBlueprint) {
       var t = todayStr();
       var now = new Date().toISOString();
       return {
@@ -975,6 +1055,14 @@
         reminders: MOCK.reminders.map(function (r) {
           return { id: uid(), title: r.title, at: localInputValue(r.hours), lead: r.lead, done: false };
         }),
+        // 第一节「正在上」（当前时间前 5 分钟开始，一节 100 分钟），第二节在今天晚些时候
+        courses: withBlueprint ? [
+          { title: '高等数学', place: 'A203', start: mockHM(-5), end: mockHM(95) },
+          { title: '大学英语', place: 'B105', start: mockHM(240), end: mockHM(340) }
+        ] : [],
+        anniv: withBlueprint ? [
+          { title: '期末', date: mockDate(23) }
+        ] : [],
         seeded: true
       };
     }
@@ -1000,11 +1088,11 @@
             if (FORCE_STATE === 'error') throw new Error('模拟：取数据失败');
             if (FORCE_STATE === 'loading') return;          // 一直停在加载态
             if (FORCE_STATE === 'mock') {                   // 强制假数据版（演示/截图），不落盘
-              resolve(mockState());
+              resolve(mockState(true));
               return;
             }
             if (FORCE_STATE === 'empty') {                  // 强制空数据版（演示空态），不落盘
-              resolve({ items: [], reminders: [], seeded: false });
+              resolve({ items: [], reminders: [], courses: [], anniv: [], seeded: false });
               return;
             }
             if (!storageOk()) throw new Error('浏览器不允许读写本地存储（可能开着无痕模式）');
@@ -1113,6 +1201,10 @@
       var shown = applyFilter(todays);
       document.getElementById('emptyHint').hidden = todays.length !== 0;
       document.getElementById('filterEmpty').hidden = !(todays.length > 0 && shown.length === 0);
+
+      // 主屏蓝图的两块占位：没数据时各自隐藏，真实使用不受影响
+      renderAnniv(state.anniv);
+      renderClasses(state.courses);
 
       renderOverdue(overdue, today);
       renderToday(shown);
@@ -1428,6 +1520,87 @@
         li.appendChild(dot);
         li.appendChild(title);
         li.appendChild(del);
+        ul.appendChild(li);
+      });
+    }
+
+    // ---------- 主屏蓝图：倒数日 + 今天的课（占位渲染，等真功能接数据）----------
+    // 两条铁律：① 没数据就整块隐藏，真实使用零影响；② 假数据只在 ?state=mock 下出现。
+    function daysUntil(dateStr) {
+      var t = new Date(todayStr() + 'T00:00:00').getTime();
+      var d = new Date(dateStr + 'T00:00:00').getTime();
+      return Math.round((d - t) / 86400000);
+    }
+
+    function renderAnniv(list) {
+      var bar = document.getElementById('annivBar');
+      if (!list || !list.length) { bar.hidden = true; return; }
+      // 只显示最近的那一个 —— 倒数日做成一堆就抢主屏了
+      var near = list.slice().sort(function (a, b) {
+        return daysUntil(a.date) - daysUntil(b.date);
+      })[0];
+      var n = daysUntil(near.date);
+      document.getElementById('annivText').textContent =
+        n > 0 ? '距' + near.title + '还有 ' + n + ' 天'
+          : n === 0 ? '就是今天 · ' + near.title
+            : near.title + '已过去 ' + (-n) + ' 天';
+      bar.hidden = false;
+    }
+
+    function hhmmToMin(hhmm) {
+      var p = String(hhmm).split(':');
+      return (+p[0]) * 60 + (+p[1]);
+    }
+
+    function renderClasses(list) {
+      var block = document.getElementById('classBlock');
+      var ul = document.getElementById('classList');
+      ul.innerHTML = '';
+      if (!list || !list.length) { block.hidden = true; return; }
+      block.hidden = false;
+
+      var now = new Date();
+      var nowMin = now.getHours() * 60 + now.getMinutes();
+
+      list.forEach(function (c) {
+        var s = hhmmToMin(c.start);
+        var e = hhmmToMin(c.end);
+        var isNow = nowMin >= s && nowMin < e;
+        var isPast = nowMin >= e;
+
+        var li = document.createElement('li');
+        li.className = 'cs' + (isNow ? ' is-now' : '') + (isPast ? ' is-past' : '');
+
+        var time = document.createElement('span');
+        time.className = 'cs-time';
+        time.textContent = c.start;
+
+        var main = document.createElement('span');
+        main.className = 'cs-main';
+        var title = document.createElement('span');
+        title.className = 'cs-title';
+        title.textContent = c.title;
+        main.appendChild(title);
+        if (c.place) {
+          var meta = document.createElement('span');
+          meta.className = 'cs-meta';
+          meta.textContent = c.place;
+          main.appendChild(meta);
+        }
+
+        li.appendChild(time);
+        li.appendChild(main);
+
+        // 上课中提示还剩多久；还没上的，只在两小时内才提示（一整天的倒计时没意义）
+        var tip = '';
+        if (isNow) tip = '还有 ' + (e - nowMin) + ' 分钟下课';
+        else if (!isPast && s - nowMin <= 120) tip = '还有 ' + (s - nowMin) + ' 分钟';
+        if (tip) {
+          var tipEl = document.createElement('span');
+          tipEl.className = 'cs-tip';
+          tipEl.textContent = tip;
+          li.appendChild(tipEl);
+        }
         ul.appendChild(li);
       });
     }
