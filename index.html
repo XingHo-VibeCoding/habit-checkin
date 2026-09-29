@@ -409,7 +409,13 @@
       font-size: 12px;
       letter-spacing: 0.04em;
       color: var(--gold-deep);
+      cursor: pointer;
     }
+    /* 键盘聚焦时给个看得见的框（这条现在是按钮了，不能只靠鼠标手型） */
+    .anniv:focus-visible { outline: 2px solid var(--gold-deep); outline-offset: 2px; }
+    /* 管理列表里的日期录入框：日期要显示「2026-10-22」，比分钟数宽一截 */
+    .an-date { flex: none !important; width: 132px; }
+    li.an-past .title { color: var(--soft); }
     .anniv-tag {
       flex: none;
       font-size: 10px;
@@ -884,8 +890,10 @@
 
     <div class="view" id="viewToday">
       <!-- 倒数日 —— 取自滴答清单：只占一行，不占块。做成块就会抢主屏。
-           没有纪念日数据时整条隐藏（占位数据只在 ?state=mock 下出现） -->
-      <div class="anniv" id="annivBar" hidden>
+           没有纪念日数据时整条隐藏（占位数据只在 ?state=mock 下出现）
+           整条可点：点了去提醒视图里的管理区，不在这里展开第二层 -->
+      <div class="anniv" id="annivBar" role="button" tabindex="0"
+           aria-label="倒数纪念日，点击去管理" hidden>
         <span class="anniv-tag">倒数</span>
         <span class="anniv-text" id="annivText"></span>
       </div>
@@ -941,6 +949,22 @@
           </div>
         </form>
         </div>
+      </section>
+
+      <!-- 倒数纪念日的管理在这儿，不在主屏：加纪念日是低频操作，
+           放主屏会抬高「打开到勾完」的成本（PRD 的 10 秒判据）。
+           主屏那行点一下就跳到这儿 —— 入口唯一，不维护两份界面 -->
+      <section class="block" id="annivBlock">
+        <h2>倒数纪念日</h2>
+        <ul id="annivList"></ul>
+        <div class="empty" id="annivEmpty" hidden>还没有纪念日，在下面加一个。</div>
+        <form class="rem-form" id="annivForm" autocomplete="off">
+          <div class="rem-row">
+            <input class="add-input" id="anTitle" type="text" placeholder="名称，比如「期末」…" aria-label="纪念日名称">
+            <input class="add-input an-date" id="anDate" type="date" aria-label="纪念日日期">
+            <button class="add-btn" type="submit" aria-label="添加纪念日">+</button>
+          </div>
+        </form>
       </section>
     </div>
 
@@ -1061,7 +1085,7 @@
           { title: '大学英语', place: 'B105', start: mockHM(240), end: mockHM(340) }
         ] : [],
         anniv: withBlueprint ? [
-          { title: '期末', date: mockDate(23) }
+          { id: uid(), title: '期末', date: mockDate(23) }
         ] : [],
         seeded: true
       };
@@ -1205,6 +1229,7 @@
       // 主屏蓝图的两块占位：没数据时各自隐藏，真实使用不受影响
       renderAnniv(state.anniv);
       renderClasses(state.courses);
+      renderAnnivList();
 
       renderOverdue(overdue, today);
       renderToday(shown);
@@ -1535,16 +1560,81 @@
     function renderAnniv(list) {
       var bar = document.getElementById('annivBar');
       if (!list || !list.length) { bar.hidden = true; return; }
-      // 只显示最近的那一个 —— 倒数日做成一堆就抢主屏了
-      var near = list.slice().sort(function (a, b) {
-        return daysUntil(a.date) - daysUntil(b.date);
-      })[0];
+      // 只倒数未来的那一个（annivSorted 已按「未来的在前、刚过去的在后」排好）。
+      // 全都过去了就整条隐藏 —— 倒数日的意义在未来，已经过去的日子归管理列表管，
+      // 那里还能看到「已过去 N 天」，主屏没必要为它留位置。
+      var near = annivSorted()[0];
+      if (!near || daysUntil(near.date) < 0) { bar.hidden = true; return; }
       var n = daysUntil(near.date);
       document.getElementById('annivText').textContent =
         n > 0 ? '距' + near.title + '还有 ' + n + ' 天'
-          : n === 0 ? '就是今天 · ' + near.title
-            : near.title + '已过去 ' + (-n) + ' 天';
+          : '就是今天 · ' + near.title;
       bar.hidden = false;
+    }
+
+    // 排序规则：未来的按「还有几天」升序在前，过去的按「刚过去」在前排后面。
+    // 直接按天数升序会把过期最久的顶到第一位 —— 那是倒数条最不该显示的一条。
+    function annivSorted() {
+      var future = [], past = [];
+      (state.anniv || []).forEach(function (a) {
+        (daysUntil(a.date) >= 0 ? future : past).push(a);
+      });
+      future.sort(function (a, b) { return daysUntil(a.date) - daysUntil(b.date); });
+      past.sort(function (a, b) { return daysUntil(b.date) - daysUntil(a.date); });
+      return future.concat(past);
+    }
+
+    function renderAnnivList() {
+      var ul = document.getElementById('annivList');
+      ul.innerHTML = '';
+      var list = annivSorted();
+      document.getElementById('annivEmpty').hidden = list.length > 0;
+
+      list.forEach(function (a) {
+        var n = daysUntil(a.date);
+        var li = document.createElement('li');
+        li.className = n < 0 ? 'an-past' : '';
+
+        var main = document.createElement('div');
+        main.className = 'rm-main';
+        var title = document.createElement('span');
+        title.className = 'title';
+        title.textContent = a.title;
+        var meta = document.createElement('span');
+        meta.className = 'rm-meta';
+        meta.textContent = a.date + ' · ' +
+          (n > 0 ? '还有 ' + n + ' 天' : n === 0 ? '就是今天' : '已过去 ' + (-n) + ' 天');
+        main.appendChild(title);
+        main.appendChild(meta);
+
+        var del = document.createElement('button');
+        del.className = 'del';
+        del.textContent = '✕';
+        del.title = '删除';
+        del.setAttribute('aria-label', '删除纪念日');
+        del.addEventListener('click', function () { removeAnniv(a.id); });
+
+        li.appendChild(main);
+        li.appendChild(del);
+        ul.appendChild(li);
+      });
+    }
+
+    function addAnniv(title, date) {
+      state.anniv.push({ id: uid(), title: title, date: date });
+      save();
+      render();
+    }
+
+    function removeAnniv(id) {
+      var index = -1;
+      state.anniv.forEach(function (a, n) { if (a.id === id) index = n; });
+      if (index < 0) return;
+      pendingUndo = { kind: 'anniv', item: state.anniv[index], index: index };
+      state.anniv.splice(index, 1);
+      save();
+      render();
+      showUndo('已删除纪念日「' + pendingUndo.item.title + '」');
     }
 
     function hhmmToMin(hhmm) {
@@ -1666,8 +1756,9 @@
       var index = -1;
       state.items.forEach(function (i, n) { if (i.id === id) index = n; });
       if (index < 0) return;
-      // 删之前先记住「删的是谁、它原本排第几」——撤销要放回原位，不是补到末尾
-      pendingUndo = { item: state.items[index], index: index };
+      // 删之前先记住「删的是谁、它原本排第几」——撤销要放回原位，不是补到末尾。
+      // kind 标明是哪种数组，撤销时才知道该插回哪里（清单项和纪念日是两套数组）
+      pendingUndo = { kind: 'item', item: state.items[index], index: index };
       state.items.splice(index, 1);
       save();
       render();
@@ -1678,7 +1769,7 @@
     // 删除是这个页面上唯一没法回头的操作。Day 10 把整行改成可点之后，手指落在行里时
     // ✕ 就在手边，误触概率反而高了 —— 退路必须补上，不然每次点错都是真的丢一条。
     var UNDO_MS = 4000;                 // 撤销条的停留时长
-    var pendingUndo = null;             // { item, index }：一次只挂一笔，删新的会顶掉旧的
+    var pendingUndo = null;             // { kind, item, index }：一次只挂一笔，删新的会顶掉旧的
     var undoTimer = null;
 
     var undoBar = document.getElementById('undoBar');
@@ -1703,9 +1794,11 @@
 
     function undoRemove() {
       if (!pendingUndo) return;
-      var at = Math.min(pendingUndo.index, state.items.length);
-      state.items.splice(at, 0, pendingUndo.item);
+      var p = pendingUndo;
       hideUndo();                       // 机会用掉了，顺手把计时器和浮层收干净
+      // 清单项和纪念日各存各的数组，按 kind 决定插回哪一支
+      var arr = p.kind === 'anniv' ? state.anniv : state.items;
+      arr.splice(Math.min(p.index, arr.length), 0, p.item);
       save();
       render();
     }
@@ -1758,6 +1851,27 @@
       remTitle.value = '';
       remLead.value = '0';
       remTitle.focus();
+    });
+
+    var anTitle = document.getElementById('anTitle');
+    var anDate = document.getElementById('anDate');
+    document.getElementById('annivForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var title = anTitle.value.trim();
+      if (!title) return;                                    // 空名称：无反应（B1 同款）
+      if (!anDate.value) { anDate.focus(); return; }          // 日期必填
+      addAnniv(title, anDate.value);
+      anTitle.value = '';
+      anDate.value = '';
+      anTitle.focus();
+    });
+
+    // 主屏那一行点了去管理区：不就地展开第二层（主屏要轻），也不另开入口（只维护一份界面）
+    var annivBar = document.getElementById('annivBar');
+    function gotoAnniv() { location.hash = '#/reminders'; }
+    annivBar.addEventListener('click', gotoAnniv);
+    annivBar.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); gotoAnniv(); }
     });
 
     // 到点自动高亮：每 30 秒比对一次状态，只有真变了才重绘（F2.3「不用刷新也能变」）
