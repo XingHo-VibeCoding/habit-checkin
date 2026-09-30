@@ -7,7 +7,8 @@
   <style>
     :root {
       /* ---------- 极简浅色：白底 + 单一强调色 ----------
-         主题（Day 14·C）：羊皮纸、警示斜纹、砖缝、看板娘立绘全部下线。
+         主题（Day 14·C）：白底 + 单一强调色。羊皮纸、警示斜纹、砖缝、看板娘立绘、
+         页头的主题标签与徽章一并下线 —— 不再走原来那套动漫主题路线。
          颜色只做两件事：中性灰管层级，一支蓝管「可交互 / 已选中 / 已完成」。
          唯一例外是逾期用的红 —— 那是语义色（危险），不是装饰色。 */
       --card: #ffffff;
@@ -74,27 +75,6 @@
       border: 1px solid var(--line);
       box-shadow: var(--shadow-3);
     }
-    /* 页头上方一行小标签：极简版只留细灰字 + 两侧渐隐细线，不做任何纹理 */
-    .corps-bar {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin: 2px 0 14px;
-    }
-    .corps-bar::before,
-    .corps-bar::after {
-      content: "";
-      flex: 1;
-      height: 1px;
-      background: linear-gradient(90deg, rgba(0, 0, 0, 0), var(--line), rgba(0, 0, 0, 0));
-    }
-    .corps-bar span {
-      flex: none;
-      font-size: 10px;
-      letter-spacing: 0.22em;
-      text-indent: 0.22em;
-      color: var(--soft);
-    }
     .head {
       display: flex;
       align-items: center;
@@ -104,7 +84,6 @@
       border-bottom: 1px solid var(--line);
     }
     .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-    .wing { width: 40px; height: 40px; flex: none; color: var(--accent); }
     .date {
       font-family: var(--font-display);
       font-size: 21px;
@@ -170,14 +149,32 @@
        容器是浏览器原生横向滚动 + scroll-snap，惯性、回弹、跟手全部由系统负责，
        JS 只在「停下来之后」把地址栏和标签同步过去 —— 这是滑动不掉帧的根本原因。 */
     .tabs {
+      position: relative;
       display: flex;
-      gap: var(--space-2);
+      gap: 0;                    /* 三格必须紧密平铺，指示条才能用 translateX(100%) 对位 */
       margin: 14px 0 10px;
       padding: 3px;
       background: var(--surface-sunk);
       border-radius: var(--radius-pill);
     }
+    /* 选中指示条：位置由 JS 按滚动比例实时写 transform，手指动多少它动多少。
+       ⚠️ 刻意不加 transition —— 加了就永远比手指慢一拍，这就是「上面的方块滑得慢」的根因。
+       点标签时同样由平滑滚动的 scroll 事件带着走，所以两种切换方式都是同一条动画曲线。 */
+    .tab-ind {
+      position: absolute;
+      left: 3px;
+      top: 3px;
+      bottom: 3px;
+      width: calc((100% - 6px) / 3);
+      border-radius: var(--radius-pill);
+      background: var(--card);
+      box-shadow: var(--shadow-1);
+      pointer-events: none;      /* 不能挡住底下按钮的点击 */
+      z-index: 0;
+    }
     .tab {
+      position: relative;
+      z-index: 1;
       flex: 1;
       padding: 8px 0;
       border: none;
@@ -188,15 +185,10 @@
       font-size: 13px;
       letter-spacing: 0.04em;
       cursor: pointer;
-      transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+      transition: color var(--dur-fast) ease;
     }
     .tab:hover { color: var(--ink); }
-    .tab.is-on {
-      background: var(--card);
-      color: var(--accent-deep);
-      font-weight: 600;
-      box-shadow: var(--shadow-1);
-    }
+    .tab.is-on { color: var(--accent-deep); font-weight: 600; }
     .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
     .views {
@@ -216,7 +208,8 @@
       flex: 0 0 100%;
       min-width: 100%;
       scroll-snap-align: start;
-      scroll-snap-stop: always;
+      /* 不写 scroll-snap-stop: always —— 那会强制「一次滑动只准翻一页」，
+         快甩一下也只能走一格，手感上就是「慢」。让它按惯性自然走，反正 mandatory 会吸附到整页 */
     }
 
     /* 区块之间：一条细线就够，不做砖缝 */
@@ -268,11 +261,11 @@
     .filter-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
     /* ---------- 动效编排 ---------- */
-    .corps-bar, .head, .tabs {
+    .head, .tabs {
       animation: rise var(--dur-base) var(--ease-out) both;
     }
-    .head { animation-delay: 90ms; }
-    .tabs { animation-delay: 180ms; }
+    .head { animation-delay: 0ms; }
+    .tabs { animation-delay: 90ms; }
     @keyframes rise {
       from { opacity: 0; transform: translateY(8px); }
       to { opacity: 1; transform: none; }
@@ -677,31 +670,15 @@
     /* 尊重系统「减少动态效果」：入场动画、装饰性过渡、平滑滚动一并关掉 */
     @media (prefers-reduced-motion: reduce) {
       button, input, select, a, .link, .dot, .del, .tab, .filter-btn { transition: none; }
-      .corps-bar, .head, .tabs { animation: none; }
+      .head, .tabs { animation: none; }
       .views { scroll-behavior: auto; }
     }
   </style>
 </head>
 <body>
   <main class="app">
-    <div class="corps-bar"><span>调查兵团 · 每日任务</span></div>
     <header class="head">
       <div class="brand">
-        <svg class="wing" viewBox="0 0 48 48" aria-hidden="true">
-          <path class="w1" d="M24 18 L14 15 L18.5 19 L11.5 20 L18 23 L14 28 L24 25 Z" fill="currentColor" opacity="0.35"/>
-          <path class="w2" d="M24 18 L34 15 L29.5 19 L36.5 20 L30 23 L34 28 L24 25 Z" fill="currentColor" opacity="0.35"/>
-          <path d="M24 5.5 C17.5 5.5 13.5 10.5 13.5 16.5 C13.5 21.5 16.5 25.5 20.5 26.8 L20.5 29 L27.5 29 L27.5 26.8 C31.5 25.5 34.5 21.5 34.5 16.5 C34.5 10.5 30.5 5.5 24 5.5 Z" fill="currentColor"/>
-          <circle cx="20.6" cy="17.5" r="1.7" fill="#ffffff"/>
-          <circle cx="27.4" cy="17.5" r="1.7" fill="#ffffff"/>
-          <path d="M22.3 21.5 Q24 23.2 25.7 21.5" stroke="#ffffff" stroke-width="1.3" fill="none" stroke-linecap="round"/>
-          <path d="M24 28.5 L19.5 32.5 L18.5 42.5 L22 39.8 L24 41.8 L26 39.8 L29.5 42.5 L28.5 32.5 Z" fill="currentColor"/>
-          <path d="M18.8 27.2 Q24 30.2 29.2 27.2 L29.2 30.8 Q24 33.2 18.8 30.8 Z" fill="#1c4fc0"/>
-          <path d="M28.5 29.5 L35 35.5 L30.5 36 Z" fill="#1c4fc0"/>
-          <rect x="14.5" y="32" width="4" height="7" rx="1" fill="currentColor" opacity="0.85"/>
-          <rect x="29.5" y="32" width="4" height="7" rx="1" fill="currentColor" opacity="0.85"/>
-          <path d="M12.5 29 L18.5 34.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          <path d="M35.5 29 L29.5 34.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
         <div>
           <div class="date" id="today"></div>
           <span class="week" id="week"></span>
@@ -711,6 +688,7 @@
     </header>
 
     <nav class="tabs" id="tabs" role="tablist" aria-label="视图切换">
+      <span class="tab-ind" id="tabInd" aria-hidden="true"></span>
       <button class="tab is-on" type="button" data-v="today" role="tab" aria-selected="true">今日清单</button>
       <button class="tab" type="button" data-v="reminders" role="tab" aria-selected="false">提醒</button>
       <button class="tab" type="button" data-v="done" role="tab" aria-selected="false">已完成</button>
@@ -989,6 +967,7 @@
     var VIEWS = { today: 'viewToday', reminders: 'viewReminders', done: 'viewDone' };
     var VIEW_ORDER = ['today', 'reminders', 'done'];
     var viewsEl = document.getElementById('views');
+    var tabInd = document.getElementById('tabInd');
     var syncingScroll = 0;     // 程序滚动的时间戳：这段时间里的 scroll 不算「用户滑的」
 
     function currentView() {
@@ -1003,11 +982,27 @@
 
     function scrollToView(name) {
       var w = viewsEl.clientWidth;
-      if (!w) return;                                        // 还没布局（加载态把 #views 藏了），等下一轮
+      if (!w) return false;                                  // 还没布局（加载态把 #views 藏了），等下一轮
       var left = viewIndex(name) * w;
-      if (Math.abs(viewsEl.scrollLeft - left) < 2) return;   // 已经在这一页，别白滚一次
+      if (Math.abs(viewsEl.scrollLeft - left) < 2) return false;   // 已经在这一页，别白滚一次
       syncingScroll = Date.now();
       viewsEl.scrollTo({ left: left, behavior: 'smooth' });
+      return true;
+    }
+
+    // 选中指示条：参数是「小数页码」，0 = 第 1 页，1.4 = 正滑向第 2 页的 40%。
+    // 手指一动它就动，等滑停了才更新 —— 那是上一次被嫌「滑得慢」的原因。
+    function paintInd(frac) {
+      tabInd.style.transform = 'translateX(' + (frac * 100) + '%)';
+    }
+
+    function setActiveTab(name) {
+      Array.prototype.forEach.call(document.getElementById('tabs')
+        .querySelectorAll('.tab'), function (b) {
+          var on = b.getAttribute('data-v') === name;
+          b.classList.toggle('is-on', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');   // 读屏器知道当前在第几个视图
+        });
     }
 
     function applyRoute() {
@@ -1018,17 +1013,24 @@
         el.inert = !on;
         el.setAttribute('aria-hidden', on ? 'false' : 'true');
       });
-      Array.prototype.forEach.call(document.getElementById('tabs').children, function (b) {
-        var on = b.getAttribute('data-v') === v;
-        b.classList.toggle('is-on', on);
-        b.setAttribute('aria-selected', on ? 'true' : 'false');   // 读屏器知道当前在第几个视图
-      });
-      scrollToView(v);
+      setActiveTab(v);
+      // 没真的滚（已经在这一页 / 还没布局）时不会有 scroll 事件，指示条得自己到位
+      if (!scrollToView(v)) paintInd(viewIndex(v));
     }
 
-    // 手指滑到位之后，再把地址栏和标签同步过去（惯性没停之前不打扰）
+    // 滑动期间：指示条实时跟手；地址栏等滑停了再同步
     var settleTimer = null;
+    var lastIdx = 0;
     viewsEl.addEventListener('scroll', function () {
+      var w = viewsEl.clientWidth;
+      if (!w) return;
+      var frac = viewsEl.scrollLeft / w;
+      paintInd(frac);                                        // ① 指示条：永远跟手，不看是谁触发的滚动
+      var i = Math.round(frac);
+      if (i !== lastIdx) {                                   // ② 文字高亮：过半就换，不等滑停
+        lastIdx = i;
+        setActiveTab(VIEW_ORDER[i] || 'today');
+      }
       if (Date.now() - syncingScroll < 400) return;          // 这是程序滚动自己触发的（平滑滚动约 300ms）
       clearTimeout(settleTimer);
       settleTimer = setTimeout(function () {
@@ -1103,8 +1105,6 @@
       var overdue = state.items
         .filter(function (i) { return !i.done && i.date < today; })
         .sort(function (a, b) { return a.date < b.date ? -1 : 1; });
-
-      // 看板娘立绘按 C 主题下线；台词函数 mascotLine() 保留，恢复时把 #mascot 块加回 HTML 即可
 
       // 空态两条腿：今天压根没加事项 → emptyHint；加了但当前筛不出来 → filterEmpty
       var shown = applyFilter(todays);
@@ -1384,15 +1384,6 @@
       });
       save();
       render();
-    }
-
-    function mascotLine(total, done, overdue) {
-      if (overdue > 0) return '有 ' + overdue + ' 项昨天没做完，先处理它们。';
-      if (total === 0) return '今天还没有事项，先加一条吧。';
-      if (done === 0) return '今天从哪一件开始？';
-      if (done === total) return '今日全清，敬礼！';
-      if (done / total >= 0.5) return '过半了，剩下的不多。';
-      return '开始了就好，继续。';
     }
 
     function renderToday(list) {
