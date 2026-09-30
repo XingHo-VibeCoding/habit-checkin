@@ -6,40 +6,32 @@
   <title>每日打卡清单</title>
   <style>
     :root {
-      /* ---------- 表面与墨色 ---------- */
-      --card-1: #faf6ec;
-      --card-2: #f2ebda;
-      --ink: #2c2a22;
-      --muted: #6a6658;
-      /* 原 #ddd4bf 与卡片明度只差 11.8，弱光下几乎看不见；加深到差 20.0 */
-      /* 纯装饰分隔线：1.57:1。WCAG 1.4.11 只约束"识别控件所必需的边界"，
-         分隔线属装饰，刻意保持轻盈不抢内容 */
-      --line: #c9bda2;
-      --row-line: #e9e2d0;
-      /* 控件边界线：3.52:1，达 WCAG 1.4.11 的 3:1。原来跟 --line 共用一条，
-         未勾选的方框在卡片上只有 1.60:1 —— 控件看不见，等于点不准 */
-      --line-strong: #857b66;
-      --accent: #a3352a;
-      /* 军绿：第二个色相家族（88°），管结构性元素。原来整页只有 40-48° 一个黄褐家族，视觉太平 */
-      --olive: #5c6650;
-      --olive-deep: #4b5442;   /* 选中态底色。铁律：选中/hover 必须比常态更深 */
-      --on-olive: #f5f1e4;     /* 军绿底上的文字 7.02:1 */
-      --gold: #7a6130;
-      --gold-dim: #8f7a4a;
-      --soft: #6c6656;
-      --surface-sunk: rgba(255, 255, 255, 0.62);  /* 内凹面：输入框、勾选框 */
-      /* Day 9 审查后新增：原 #c9705f 在卡片底色上只有 2.96:1，不达 WCAG AA 4.5:1 */
-      --danger-ink: #9e4636;
-      /* hover 态要比常态更深，不能更浅 */
-      --gold-deep: #5c4823;
-      --soft-deep: #57523f;
-      /* 深墨底撤销条上的金字。#7a6130 在深色上只有 2.1:1，这里 7.2:1 */
-      --gold-on-dark: #d9b25c;
+      /* ---------- 极简浅色：白底 + 单一强调色 ----------
+         主题（Day 14·C）：羊皮纸、警示斜纹、砖缝、看板娘立绘全部下线。
+         颜色只做两件事：中性灰管层级，一支蓝管「可交互 / 已选中 / 已完成」。
+         唯一例外是逾期用的红 —— 那是语义色（危险），不是装饰色。 */
+      --card: #ffffff;
+      --page: #f5f6f8;
+      --ink: #1f2328;          /* 正文 14.7:1 */
+      --muted: #5f6874;        /* 次要文字 5.65:1 */
+      --soft: #6b7280;         /* 更弱的说明文字 4.83:1（仍过 AA，别再调浅） */
+      --soft-deep: #4b5563;    /* 触屏下删除键的墨色 */
+      --line: #e8eaee;         /* 分隔线（装饰，不受 3:1 约束） */
+      --row-line: #f2f3f6;
+      --line-strong: #8a929e;  /* 控件边界 3.14:1，达 WCAG 1.4.11 */
+      --surface-sunk: #f7f8fa; /* 内凹面：输入框、勾选框 */
+
+      --accent: #2f6feb;       /* 4.57:1，白字压在上面也是 4.57:1 */
+      --accent-deep: #1c4fc0;  /* 选中/hover 态：7.17:1，铁律是比常态更深 */
+      --accent-wash: rgba(47, 111, 235, 0.08);
+      --accent-wash-2: rgba(47, 111, 235, 0.14);
+      --on-accent: #ffffff;
+      --danger: #c93f35;       /* 4.89:1，只给逾期 */
+      --danger-wash: rgba(201, 63, 53, 0.07);
+      --on-dark: #ffd479;      /* 深底撤销条上的字 */
 
       /* ---------- 字体（零外部请求：PRD C2 禁止外链，只能用系统自带） ---------- */
-      /* 展示字走衬线：碑刻 / 档案气质。iOS→Songti SC，Windows→SimSun，安卓→Noto Serif CJK，
-         三端系统自带无需下载，不违反 C2。只用于大字号（日期、完成度），小字仍用无衬线 */
-      --font-display: "Songti SC", "SimSun", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", serif;
+      --font-display: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
       --font-body: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 
       /* ---------- 间距梯度（4 / 8 / 12 / 16 / 24 / 40） ---------- */
@@ -47,12 +39,12 @@
       --space-4: 16px; --space-5: 24px; --space-6: 40px;
 
       /* ---------- 圆角 ---------- */
-      --radius-sm: 2px; --radius-md: 3px; --radius-pill: 999px;
+      --radius-sm: 8px; --radius-md: 14px; --radius-pill: 999px;
 
-      /* ---------- 阴影三级（Y 偏移 2 / 8 / 24，带环境色而非纯黑） ---------- */
-      --shadow-1: 0 2px 6px rgba(70, 58, 34, 0.10);
-      --shadow-2: 0 8px 22px rgba(70, 58, 34, 0.18);
-      --shadow-3: 0 14px 34px rgba(70, 58, 34, 0.14);
+      /* ---------- 阴影三级 ---------- */
+      --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06);
+      --shadow-2: 0 6px 16px rgba(16, 24, 40, 0.10);
+      --shadow-3: 0 2px 10px rgba(16, 24, 40, 0.06);
 
       /* ---------- 动效 ---------- */
       --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -70,176 +62,63 @@
       /* 中文正文行高规范值 ≥1.7，这里是紧凑清单工具，取 1.6 折衷：
          再高会把列表撑长，违反「打开到勾完 ≤10 秒」的 A1 判据 */
       line-height: 1.6;
-      background:
-        radial-gradient(900px 500px at 50% -5%, #fffdf6 0%, rgba(0, 0, 0, 0) 70%),
-        linear-gradient(180deg, #f4eddd 0%, #e6dec9 100%);
-      background-attachment: fixed;
-    }
-    /* 做旧纸感：纤维斜纹 + 几处陈旧污渍 */
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      z-index: 0;
-      pointer-events: none;
-      background:
-        radial-gradient(340px 250px at 14% 20%, rgba(140, 108, 48, 0.09), rgba(0, 0, 0, 0) 70%),
-        radial-gradient(280px 210px at 86% 74%, rgba(163, 53, 42, 0.05), rgba(0, 0, 0, 0) 70%),
-        repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.02) 0 2px, rgba(0, 0, 0, 0) 2px 4px);
-    }
-    /* 纸张边缘：四周做旧压深 */
-    body::after {
-      content: "";
-      position: fixed;
-      inset: 0;
-      z-index: 0;
-      pointer-events: none;
-      background: radial-gradient(125% 95% at 50% 38%, rgba(0, 0, 0, 0) 52%, rgba(96, 78, 45, 0.16) 100%);
+      background: var(--page);
     }
     .app {
       position: relative;
-      z-index: 1;
       max-width: 520px;
       margin: 0 auto;
-      padding: 22px var(--space-4) 10px;
+      padding: 18px var(--space-4) 12px;
       border-radius: var(--radius-md);
-      background: linear-gradient(180deg, var(--card-1), var(--card-2));
+      background: var(--card);
       border: 1px solid var(--line);
-      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), var(--shadow-3);
+      box-shadow: var(--shadow-3);
     }
-    /* 纸颗粒：内联 SVG 噪点（data-URI，不产生任何网络请求，符合 PRD 的 C2）。
-       4.5% 透明度叠在卡片上，平涂底色因此有了实物感。
-       关掉方式：删掉 .app::after 这段 */
-    .app::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      z-index: 2;
-      pointer-events: none;
-      border-radius: inherit;
-      opacity: 0.045;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
-    }
-    /* 顶部警示斜纹条 */
-    .app::before {
-      content: "";
-      position: absolute;
-      left: 0;
-      right: 0;
-      top: 0;
-      height: 5px;
-      background: repeating-linear-gradient(45deg, var(--gold) 0 7px, #efe7d4 7px 14px);
-      opacity: 0.85;
-    }
-    /* 页头招牌：兵团标签（关掉方式：删掉 .corps-bar 这段） */
+    /* 页头上方一行小标签：极简版只留细灰字 + 两侧渐隐细线，不做任何纹理 */
     .corps-bar {
       display: flex;
       align-items: center;
       gap: 12px;
-      margin: 2px 0 15px;
+      margin: 2px 0 14px;
     }
     .corps-bar::before,
     .corps-bar::after {
       content: "";
       flex: 1;
       height: 1px;
-      background: linear-gradient(90deg, rgba(143, 122, 74, 0), var(--gold-dim), rgba(143, 122, 74, 0));
+      background: linear-gradient(90deg, rgba(0, 0, 0, 0), var(--line), rgba(0, 0, 0, 0));
     }
     .corps-bar span {
       flex: none;
       font-size: 10px;
-      letter-spacing: 0.3em;
-      text-indent: 0.3em;
-      color: var(--gold);
+      letter-spacing: 0.22em;
+      text-indent: 0.22em;
+      color: var(--soft);
     }
-    /* 徽章 hover：翅膀轻展（关掉方式：删掉 .w1 .w2 这段） */
-    .w1, .w2 {
-      transform-box: view-box;
-      transform-origin: 24px 19px;
-      transition: transform 0.28s ease;
-    }
-    .brand:hover .w1 { transform: translateX(-2.5px) rotate(-5deg); }
-    .brand:hover .w2 { transform: translateX(2.5px) rotate(5deg); }
-    @media (prefers-reduced-motion: reduce) { .w1, .w2 { transition: none; } }
-
-    /* 区块之间：城墙砖缝（关掉方式：改回 border-top: 1px solid var(--line)） */
-    .block + .block {
-      border-top: none;
-      padding-top: 24px;
-    }
-    .block + .block::before {
-      content: "";
-      display: block;
-      height: 9px;
-      margin: 0 0 18px;
-      border-top: 1px solid var(--line);
-      border-bottom: 1px solid var(--line);
-      background:
-        repeating-linear-gradient(90deg, transparent 0 19px, var(--line) 19px 20px) 0 0 / 100% 4.5px repeat-x,
-        repeating-linear-gradient(90deg, transparent 0 9px, var(--line) 9px 10px, transparent 10px 19px) 0 4.5px / 100% 4.5px repeat-x;
-      opacity: 0.7;
-    }
-
     .head {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      padding-bottom: 16px;
+      padding-bottom: 14px;
       border-bottom: 1px solid var(--line);
     }
     .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-    .wing { width: 44px; height: 44px; flex: none; color: var(--gold); opacity: 0.92; }
-    .mascot {
-      display: flex;
-      align-items: flex-end;
-      gap: 10px;
-      margin: 10px 0 2px;
-      padding: 0 2px 0 0;
-      background: none;
-      border: none;
-    }
-    .mascot img {
-      width: 76px;
-      height: auto;
-      flex: none;
-      align-self: flex-end;
-      filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.22));
-      pointer-events: none;
-      user-select: none;
-    }
-    .mascot-bubble {
-      flex: 1;
-      min-width: 0;
-      margin-bottom: 12px;
-      padding: 7px 10px 8px;
-      background: rgba(0, 0, 0, 0.028);
-      border: 1px solid var(--line);
-      border-radius: 2px 10px 10px 10px;
-    }
-    .mascot-name {
-      display: block;
-      font-size: 10px;
-      letter-spacing: 0.24em;
-      color: var(--muted);
-      margin-bottom: 3px;
-    }
-    .mascot-line { font-size: 13.5px; line-height: 1.5; color: var(--ink); }
+    .wing { width: 40px; height: 40px; flex: none; color: var(--accent); }
     .date {
       font-family: var(--font-display);
-      font-size: 22px;
+      font-size: 21px;
       font-weight: 700;
-      letter-spacing: 0.01em;
-      line-height: 1.15;
+      letter-spacing: -0.01em;
+      line-height: 1.2;
       font-variant-numeric: lining-nums tabular-nums;
     }
     .week {
       display: block;
       font-size: 11px;
-      letter-spacing: 0.22em;
-      text-transform: uppercase;
-      color: var(--gold);
-      margin-top: 3px;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-top: 2px;
     }
     /* 完成度 —— 「3/5」是打卡产品的情绪核心，必须是全页最大的字（服务 PRD 的 A1 十秒判据） */
     .progress {
@@ -254,38 +133,98 @@
     .progress .pg { display: flex; align-items: baseline; gap: 5px; }
     .pg-num {
       font-family: var(--font-display);
-      font-size: 32px;
+      font-size: 30px;
       font-weight: 700;
       line-height: 1;
-      letter-spacing: -0.01em;
+      letter-spacing: -0.02em;
     }
     .pg-tot { font-size: 15px; font-weight: 600; color: var(--muted); }
     .pg-label {
       font-size: 10px;
       font-weight: 400;
-      letter-spacing: 0.22em;
-      color: var(--gold);
+      letter-spacing: 0.18em;
+      color: var(--soft);
     }
     /* 全部完成 = 唯一值得用强调色的时刻（锐利色的用法是「少而准」，不是到处撒） */
     .progress.is-done .pg-num,
     .progress.is-done .pg-tot { color: var(--accent); }
-    /* 砖墙推进条：从数字背后挪到下方 —— 30px 的字压在纹理上不好读 */
     .pg-track {
-      width: 88px;
+      width: 84px;
       height: 4px;
       border-radius: 2px;
-      background: rgba(0, 0, 0, 0.08);
+      background: var(--row-line);
       overflow: hidden;
     }
     .pg-track i {
       display: block;
       height: 100%;
       width: var(--pct, 0%);
-      background: repeating-linear-gradient(90deg, rgba(176, 58, 46, 0.75) 0 6px, rgba(176, 58, 46, 0.42) 6px 8px);
+      background: var(--accent);
+      border-radius: 2px;
       transition: width 0.35s ease;
     }
     @media (prefers-reduced-motion: reduce) { .pg-track i { transition: none; } }
-    .block { padding: 16px 0 6px; }
+
+    /* ---------- 视图切换：标签 + 原生横向滚动 ---------- */
+    /* Day 13 的标签栏保留（点也能切）；Day 14 补一层手指滑动：
+       容器是浏览器原生横向滚动 + scroll-snap，惯性、回弹、跟手全部由系统负责，
+       JS 只在「停下来之后」把地址栏和标签同步过去 —— 这是滑动不掉帧的根本原因。 */
+    .tabs {
+      display: flex;
+      gap: var(--space-2);
+      margin: 14px 0 10px;
+      padding: 3px;
+      background: var(--surface-sunk);
+      border-radius: var(--radius-pill);
+    }
+    .tab {
+      flex: 1;
+      padding: 8px 0;
+      border: none;
+      border-radius: var(--radius-pill);
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+    }
+    .tab:hover { color: var(--ink); }
+    .tab.is-on {
+      background: var(--card);
+      color: var(--accent-deep);
+      font-weight: 600;
+      box-shadow: var(--shadow-1);
+    }
+    .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .views {
+      display: flex;
+      align-items: flex-start;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-snap-type: x mandatory;
+      overscroll-behavior-x: contain;
+      -webkit-overflow-scrolling: touch;
+      scroll-behavior: smooth;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .views::-webkit-scrollbar { display: none; }
+    .view {
+      flex: 0 0 100%;
+      min-width: 100%;
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+    }
+
+    /* 区块之间：一条细线就够，不做砖缝 */
+    .block + .block {
+      border-top: 1px solid var(--line);
+      padding-top: 20px;
+    }
+    .block { padding: 4px 0 6px; }
     .block h2 {
       display: flex;
       align-items: center;
@@ -293,27 +232,14 @@
       margin: 0 0 8px;
       font-size: 11px;
       font-weight: 700;
-      letter-spacing: 0.32em;
-      color: var(--gold);
+      letter-spacing: 0.16em;
+      color: var(--soft);
     }
-    .block h2::after {
-      content: "";
-      flex: 1;
-      height: 1px;
-      background: linear-gradient(90deg, var(--gold-dim), rgba(0, 0, 0, 0));
-    }
-    /* 今日清单是主角：字号提级 + 军绿，跟"提醒"拉开视觉层级 */
-    #todayBlock h2 {
-      font-size: 14px;
-      letter-spacing: 0.18em;
-      color: var(--olive);
-    }
-    #todayBlock h2::after {
-      background: linear-gradient(90deg, var(--olive), rgba(0, 0, 0, 0));
-    }
-    /* Day 12：筛选条 —— Day 13 后只剩两个互斥条件（「已完成」归到独立视图）。
-       形状刻意做成「靠左的小药丸」：上面平分整行的那一排是页级导航（.tab），
-       这两个小的是视图内的辅助条件。宽度和形状先把层级拉开，颜色就不用再喊了 */
+    /* 今日清单是主角：字号提级 + 强调色，跟「提醒」拉开视觉层级 */
+    #todayBlock h2 { font-size: 13px; letter-spacing: 0.1em; color: var(--accent-deep); }
+    .class-block h2 { color: var(--accent-deep); }
+
+    /* Day 12：筛选条 —— Day 13 后只剩两个互斥条件（「已完成」归到独立视图） */
     .filter {
       display: flex;
       gap: var(--space-2);
@@ -332,53 +258,16 @@
       cursor: pointer;
       transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
     }
-    .filter-btn:hover { background: rgba(92, 102, 80, 0.09); color: var(--olive); }
+    .filter-btn:hover { background: var(--accent-wash); color: var(--accent-deep); }
     .filter-btn.is-on {
-      background: var(--olive);
-      border-color: var(--olive);
-      color: var(--on-olive);
-      font-weight: 700;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--on-accent);
+      font-weight: 600;
     }
-    .filter-btn:focus-visible {
-      outline: 2px solid var(--gold-deep);
-      outline-offset: 2px;
-    }
-    /* Day 13：视图切换标签 —— 档案页签。方角 + 平分整行 + 选中态比筛选条再深一档
-       （--olive-deep）。跟下面那排靠左的小药丸一眼分开：整行的是换页，小圆的是筛选 */
-    .tabs {
-      display: flex;
-      gap: var(--space-2);
-      margin: var(--space-2) 0 var(--space-1);
-    }
-    .tab {
-      flex: 1;
-      padding: 8px 0;
-      border: 1px solid var(--line);
-      border-bottom-width: 2px;
-      border-radius: var(--radius-sm);
-      background: rgba(0, 0, 0, 0.02);
-      color: var(--muted);
-      font: inherit;
-      font-size: 13px;
-      letter-spacing: 0.08em;
-      cursor: pointer;
-      transition: background var(--dur-fast) ease, color var(--dur-fast) ease,
-                  border-color var(--dur-fast) ease;
-    }
-    .tab:hover { background: rgba(92, 102, 80, 0.09); color: var(--olive); }
-    .tab.is-on {
-      background: var(--olive-deep);
-      border-color: var(--olive-deep);
-      color: var(--on-olive);
-      font-weight: 700;
-    }
-    .tab:focus-visible {
-      outline: 2px solid var(--gold-deep);
-      outline-offset: 2px;
-    }
+    .filter-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
     /* ---------- 动效编排 ---------- */
-    /* 一次编排好的入场序列：招牌 → 页头 → 页签，组间隔 90ms（规范值 60–120ms）。
-       只动 opacity 与 transform，不触发重排，不拖慢首屏 —— A1 十秒判据优先 */
     .corps-bar, .head, .tabs {
       animation: rise var(--dur-base) var(--ease-out) both;
     }
@@ -388,31 +277,24 @@
       from { opacity: 0; transform: translateY(8px); }
       to { opacity: 1; transform: none; }
     }
-    /* 视图切换：场景级过渡。元素从 hidden 变为显示时 display 由 none 变 block，
-       animation 会自行重放，不需要 JS 额外加类 */
-    .view { animation: view-in var(--dur-base) var(--ease-out) both; }
-    @keyframes view-in {
-      from { opacity: 0; transform: translateY(6px); }
-      to { opacity: 1; transform: none; }
-    }
-    #overdueBlock h2 { color: var(--danger-ink); }
+    /* 视图切换不再用入场动画：横滑时它会在相邻页上闪一下，反而显得卡 */
+
     /* ---------- 主屏蓝图：倒数日一行 + 今天的课 ---------- */
-    /* 倒数日：一行，不占块 —— 做成块就会抢主屏。金棕描边跟「逾期/清单」分开，但不抢戏 */
     .anniv {
       display: flex;
       align-items: baseline;
       gap: var(--space-2);
       margin: var(--space-2) 0 var(--space-3);
-      padding: 5px 10px;
-      border-left: 2px solid var(--gold-dim);
-      background: rgba(138, 111, 55, 0.07);
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--surface-sunk);
       font-size: 12px;
-      letter-spacing: 0.04em;
-      color: var(--gold-deep);
+      letter-spacing: 0.03em;
+      color: var(--muted);
       cursor: pointer;
     }
-    /* 键盘聚焦时给个看得见的框（这条现在是按钮了，不能只靠鼠标手型） */
-    .anniv:focus-visible { outline: 2px solid var(--gold-deep); outline-offset: 2px; }
+    .anniv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     /* 管理列表里的日期录入框：日期要显示「2026-10-22」，比分钟数宽一截 */
     .an-date { flex: none !important; width: 132px; }
     li.an-past .title { color: var(--soft); }
@@ -420,13 +302,10 @@
       flex: none;
       font-size: 10px;
       font-weight: 700;
-      letter-spacing: 0.2em;
-      color: var(--gold);
+      letter-spacing: 0.14em;
+      color: var(--accent);
     }
     .anniv-text { min-width: 0; }
-    /* 今天的课：军绿管结构性元素，跟「今日清单」同族、比它轻一档 */
-    .class-block h2 { color: var(--olive); }
-    .class-block h2::after { background: linear-gradient(90deg, var(--olive), rgba(0, 0, 0, 0)); }
     .cs-time {
       flex: none;
       width: 42px;
@@ -440,15 +319,15 @@
     .cs-tip {
       flex: none;
       font-size: 11px;
-      font-weight: 700;
+      font-weight: 600;
       letter-spacing: 0.04em;
-      color: var(--gold);
+      color: var(--accent);
     }
-    /* 正在上的那节：军绿左侧条 + 浅底，一眼扫到 */
-    li.cs.is-now { background: rgba(92, 102, 80, 0.12); border-left-color: var(--olive); }
-    li.cs.is-now .cs-time { color: var(--olive); }
+    /* 正在上的那节：左侧强调条 + 浅底，一眼扫到 */
+    li.cs.is-now { background: var(--accent-wash); border-left-color: var(--accent); }
+    li.cs.is-now .cs-time { color: var(--accent-deep); }
     /* 已上完的：用底色弱化，不降透明度（降透明度会掉对比度，Day 9 的老教训） */
-    li.cs.is-past { background: rgba(0, 0, 0, 0.025); }
+    li.cs.is-past { background: var(--surface-sunk); }
     li.cs.is-past .cs-title { color: var(--muted); }
     /* 提醒区默认折叠 —— 它比主角还重，但不是每天都用。标题压浅，让位给今日清单 */
     .fold > summary {
@@ -460,27 +339,19 @@
     }
     .fold > summary::-webkit-details-marker { display: none; }
     .fold > summary::marker { content: ""; }
-    .fold > summary:focus-visible {
-      outline: 2px solid var(--gold-deep);
-      outline-offset: 3px;
-    }
-    .fold > summary h2 {
-      flex: 1;
-      margin-bottom: 0;
-      color: var(--muted);
-    }
+    .fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .fold > summary h2 { flex: 1; margin-bottom: 0; color: var(--muted); }
     .fold[open] > summary h2 { margin-bottom: 8px; }
     /* 折叠时也要看得出有几条待办提醒 */
     .fold-count {
       flex: none;
-      min-width: 16px;
+      min-width: 18px;
       padding: 1px 6px;
-      border: 1px solid var(--line);
       border-radius: 9px;
+      background: var(--accent-wash);
       font-size: 10px;
       font-weight: 700;
-      letter-spacing: 0.04em;
-      color: var(--muted);
+      color: var(--accent-deep);
       text-align: center;
     }
     .fold-count[hidden] { display: none; }
@@ -489,14 +360,15 @@
       flex: none;
       width: 7px;
       height: 7px;
-      border-right: 1.5px solid var(--muted);
-      border-bottom: 1.5px solid var(--muted);
+      border-right: 1.5px solid var(--soft);
+      border-bottom: 1.5px solid var(--soft);
       transform: rotate(-45deg);
       margin-top: -3px;
       transition: transform 0.2s ease;
     }
     .fold[open] > summary::after { transform: rotate(45deg); margin-top: 3px; }
     @media (prefers-reduced-motion: reduce) { .fold > summary::after { transition: none; } }
+
     ul { list-style: none; margin: 0; padding: 0; }
     li {
       display: flex;
@@ -507,22 +379,22 @@
       margin: 0 -6px;
       border-bottom: 1px solid var(--row-line);
       border-left: 2px solid transparent;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
       transition: background 0.15s ease, border-color 0.15s ease;
     }
     li:last-child { border-bottom: none; }
-    li:hover { background: rgba(0, 0, 0, 0.04); border-left-color: var(--accent); }
+    li:hover { background: var(--surface-sunk); border-left-color: var(--accent); }
     /* 整行可点：手指落在行内任何位置都算「勾一下」，不必精准戳中 22px 的方框 */
-    #todayList li { cursor: pointer; -webkit-tap-highlight-color: rgba(163, 53, 42, 0.12); }
-    #todayList li:active { background: rgba(163, 53, 42, 0.10); }
+    #todayList li { cursor: pointer; -webkit-tap-highlight-color: rgba(47, 111, 235, 0.10); }
+    #todayList li:active { background: var(--accent-wash-2); }
     .dot {
       position: relative;
       flex: none;
       width: 22px;
       height: 22px;
-      /* 原 #c3bca7 只有 1.60:1 —— 方框看不见就不知道往哪戳。换 --line-strong 达 3.52:1 */
-      border: 2px solid var(--line-strong);
-      border-radius: 2px;
-      background: var(--surface-sunk);
+      border: 2px solid var(--line-strong);   /* 3.14:1，方框看得见才知道往哪戳 */
+      border-radius: 4px;
+      background: var(--card);
       color: var(--ink);
       font-size: 13px;
       line-height: 1;
@@ -534,8 +406,8 @@
       transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease, color 0.15s ease;
     }
     .dot:active { transform: scale(0.92); }
-    .dot:hover { border-color: var(--gold); }
-    .dot.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .dot:hover { border-color: var(--accent); }
+    .dot.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
     .title { flex: 1; word-break: break-all; }
     li.done .title { color: var(--soft); text-decoration: line-through; }
     .del {
@@ -544,7 +416,7 @@
       width: 28px;
       height: 28px;
       border: none;
-      border-radius: 2px;
+      border-radius: var(--radius-sm);
       background: none;
       color: var(--soft);
       font-size: 15px;
@@ -554,9 +426,10 @@
       transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
     }
     li:hover .del, .del:focus-visible { opacity: 1; }
-    .del:hover { color: #b8392a; background: rgba(163, 53, 42, 0.15); }
+    .del:hover { color: var(--danger); background: var(--danger-wash); }
     /* 触屏没有 hover，删除键常驻显示；这时必须用更深的墨色，原来 opacity 0.5 只有 1.98:1 */
     @media (hover: none) { .del { opacity: 1; color: var(--soft-deep); } }
+
     .add { display: flex; gap: 8px; margin-top: 12px; }
     .add-input {
       flex: 1;
@@ -571,45 +444,37 @@
       line-height: 1.4;
     }
     .add-input::placeholder { color: var(--soft); }
-    .add-input:focus {
-      outline: none;
-      border-color: var(--gold-dim);
-      background: #fffdf8;
-    }
+    .add-input:focus { outline: none; border-color: var(--accent); background: var(--card); }
     .add-btn {
       flex: none;
-      width: 42px;
-      border: 1px solid var(--gold-dim);
-      border-radius: 2px;
-      background: rgba(138, 111, 55, 0.07);
-      color: var(--gold);
+      width: 44px;
+      border: 1px solid var(--accent);
+      border-radius: var(--radius-sm);
+      background: var(--accent);
+      color: var(--on-accent);
       font-size: 19px;
       line-height: 1;
       cursor: pointer;
       transition: background 0.15s ease;
     }
-    .add-btn:hover { background: rgba(138, 111, 55, 0.16); }
+    .add-btn:hover { background: var(--accent-deep); }
+
     /* 状态视图：错误 */
     .state-view { display: none; text-align: center; padding: 30px 12px 24px; }
-    body.is-error .app > *:not(.state-view):not(.tabs):not(.corps-bar) { display: none !important; }
+    body.is-error .app > *:not(.state-view):not(.tabs) { display: none !important; }
     body.is-error .state-view { display: block; }
     .state-icon {
       width: 46px;
       height: 46px;
       margin: 0 auto 16px;
-      border: 1.5px solid var(--accent);
+      border: 1.5px solid var(--danger);
       border-radius: 50%;
-      color: var(--accent);
+      color: var(--danger);
       font-size: 24px;
       font-weight: 700;
       line-height: 43px;
     }
-    .state-title {
-      font-size: 15px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      margin-bottom: 8px;
-    }
+    .state-title { font-size: 15px; font-weight: 700; letter-spacing: 0.04em; margin-bottom: 8px; }
     .state-desc {
       font-size: 12.5px;
       line-height: 1.65;
@@ -621,13 +486,13 @@
     .skeleton { display: none; }
     /* Day 13：加载 / 错误是「数据」的状态，不是「页面」的状态 ——
        所以切视图的标签栏保留：你知道自己在哪，也还能切走，只有视图区被替换掉 */
-    body.is-loading .app > *:not(.skeleton):not(.tabs):not(.corps-bar) { display: none !important; }
+    body.is-loading .app > *:not(.skeleton):not(.tabs) { display: none !important; }
     body.is-loading .skeleton { display: block; padding: 4px 0 10px; }
     .sk {
       height: 13px;
-      border-radius: 2px;
+      border-radius: var(--radius-sm);
       margin: 0 0 12px;
-      background: linear-gradient(90deg, #e6dfcc 25%, #f2ebda 50%, #e6dfcc 75%);
+      background: linear-gradient(90deg, #eef0f4 25%, #f7f8fa 50%, #eef0f4 75%);
       background-size: 200% 100%;
       animation: sk-shimmer 1.3s ease-in-out infinite;
     }
@@ -643,20 +508,15 @@
     @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
 
     /* 提醒区 */
-    li.hi { background: rgba(138, 111, 55, 0.1); border-left-color: var(--gold); }
-    li.hi .title { color: var(--gold); font-weight: 600; }
-    li.past .title { color: var(--danger-ink); }
-    /* 原来靠 opacity 0.62 做弱化，叠在深色字上只剩 1.9:1；改用底色区分，文字保持全不透明 */
-    li.past { opacity: 1; background: rgba(0, 0, 0, 0.025); }
+    li.hi { background: var(--accent-wash); border-left-color: var(--accent); }
+    li.hi .title { color: var(--accent-deep); font-weight: 600; }
+    li.hi .rm-meta { color: var(--accent-deep); letter-spacing: 0.06em; }
+    li.past .title { color: var(--danger); }
+    li.past .rm-meta { color: var(--danger); }
+    /* 弱化只用底色，不降透明度（叠在深色字上只剩 1.9:1，Day 9 的老教训） */
+    li.past { opacity: 1; background: var(--surface-sunk); }
     .rm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-    .rm-meta {
-      font-size: 11px;
-      line-height: 1.3;
-      color: var(--muted);
-      letter-spacing: 0.03em;
-    }
-    li.hi .rm-meta { color: var(--gold); letter-spacing: 0.08em; }
-    li.past .rm-meta { color: var(--danger-ink); }
+    .rm-meta { font-size: 11px; line-height: 1.3; color: var(--muted); letter-spacing: 0.03em; }
     .export-row {
       display: flex;
       align-items: center;
@@ -664,45 +524,34 @@
       margin-top: 12px;
       flex-wrap: wrap;
     }
-    .export-row .act:disabled { opacity: 0.4; cursor: not-allowed; }
-    .export-row .act:disabled:hover { background: rgba(138, 111, 55, 0.07); }
+    .export-row .act:disabled { opacity: 0.45; cursor: not-allowed; }
+    .export-row .act:disabled:hover { background: var(--surface-sunk); }
     .export-tip { flex: 1; min-width: 140px; font-size: 11px; color: var(--soft); letter-spacing: 0.02em; }
     .rem-form { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
-    .rem-row { display: flex; gap: 8px; }
+    .rem-row { display: flex; gap: 8px; flex-wrap: wrap; }
     .rem-row .add-input { flex: 1; min-width: 0; }
     .lead-input { flex: none !important; width: 92px; }
-    .lead-tip {
-      flex: none;
-      align-self: center;
-      font-size: 11px;
-      color: var(--soft);
-      letter-spacing: 0.04em;
-    }
+    .lead-tip { flex: none; align-self: center; font-size: 11px; color: var(--soft); letter-spacing: 0.04em; }
 
     /* 逾期区 */
-    li.od { border-left: 2px solid var(--accent); background: rgba(163, 53, 42, 0.06); }
-    li.od:hover { background: rgba(163, 53, 42, 0.11); border-left-color: #c9453a; }
+    li.od { border-left: 2px solid var(--danger); background: var(--danger-wash); }
+    li.od:hover { background: rgba(201, 63, 53, 0.12); border-left-color: var(--danger); }
     .od-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-    .od-date {
-      font-size: 11px;
-      line-height: 1.3;
-      color: var(--danger-ink);
-      letter-spacing: 0.03em;
-    }
+    .od-date { font-size: 11px; line-height: 1.3; color: var(--danger); letter-spacing: 0.03em; }
     .act {
       flex: none;
       padding: 5px 9px;
-      border: 1px solid var(--gold-dim);
-      border-radius: 2px;
-      background: rgba(138, 111, 55, 0.07);
-      color: var(--gold);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      background: var(--surface-sunk);
+      color: var(--muted);
       font-family: inherit;
       font-size: 11.5px;
       letter-spacing: 0.04em;
       cursor: pointer;
       transition: background 0.15s ease;
     }
-    .act:hover { background: rgba(138, 111, 55, 0.18); }
+    .act:hover { background: var(--accent-wash); color: var(--accent-deep); border-color: var(--accent); }
     li.od .del { opacity: 0.5; }
     li.od:hover .del { opacity: 1; }
     .empty {
@@ -710,10 +559,10 @@
       text-align: center;
       font-size: 13px;
       color: var(--soft);
-      letter-spacing: 0.08em;
-      background: rgba(0, 0, 0, 0.02);
-      border: 1px dashed #cfc6ae;
-      border-radius: 2px;
+      letter-spacing: 0.06em;
+      background: var(--surface-sunk);
+      border: 1px dashed var(--line);
+      border-radius: var(--radius-sm);
     }
     .foot {
       display: flex;
@@ -731,13 +580,13 @@
       flex: none;
       border: none;
       background: none;
-      color: var(--gold);
+      color: var(--accent);
       font-size: 11.5px;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.06em;
       cursor: pointer;
       padding: 4px 2px;
     }
-    .link:hover { color: var(--gold-deep); text-decoration: underline; }
+    .link:hover { color: var(--accent-deep); text-decoration: underline; }
 
     /* ---------- Day 9：触控目标与窄屏 ---------- */
     /* 视觉尺寸不变，用透明伪元素把可点区域撑到 44px（WCAG 2.5.5 / HIG 建议值） */
@@ -753,22 +602,18 @@
     }
     /* 触屏下把输入框和操作按钮抬到 44px 高，指头点得准 */
     @media (pointer: coarse) {
-      .add-input,
-      .add-btn,
-      .act { min-height: 44px; }
+      .add-input, .add-btn, .act { min-height: 44px; }
       .act { padding: 8px var(--space-3); }
-      /* 页签与筛选条同样抬到 44px：它们是全页点击频率最高的控件（WCAG 2.5.5） */
       .tab, .filter-btn { min-height: 44px; }
     }
     /* 窄屏：提醒表单第二行（时间 + 分钟 + 说明）挤不下时换行，避免横向溢出 */
-    .rem-row { flex-wrap: wrap; }
     @media (max-width: 380px) {
       .rem-row .lead-input { width: 76px; }
       .lead-tip { flex-basis: 100%; text-align: left; }
     }
 
     /* ---------- Day 11：删除后的撤销条（反馈层③「可以反悔」） ---------- */
-    /* 深墨底 + 金字，跟页面上任何一块都不一样：它是盖在界面之上的临时层，不能假装是内容 */
+    /* 深墨底 + 亮字，跟页面上任何一块都不一样：它是盖在界面之上的临时层，不能假装是内容 */
     .undo {
       position: fixed;
       left: 50%;
@@ -780,10 +625,10 @@
       width: max-content;
       max-width: calc(100vw - 32px);
       padding: 10px 10px 10px 16px;
-      border-radius: 3px;
+      border-radius: var(--radius-sm);
       background: var(--ink);
-      color: var(--card-2);
-      box-shadow: 0 8px 22px rgba(30, 25, 12, 0.34);
+      color: #ffffff;
+      box-shadow: var(--shadow-2);
       font-size: 13px;
       letter-spacing: 0.03em;
       opacity: 0;
@@ -804,39 +649,36 @@
       min-height: 36px;                 /* 浮层总高限制下的折衷；宽的那一维够手指落 */
       padding: 0 10px;
       border: none;
-      border-radius: 2px;
+      border-radius: var(--radius-sm);
       background: none;
-      color: var(--gold-on-dark);
+      color: var(--on-dark);
       font: inherit;
       font-size: 13px;
       letter-spacing: 0.1em;
       cursor: pointer;
-      -webkit-tap-highlight-color: rgba(217, 178, 92, 0.2);
+      -webkit-tap-highlight-color: rgba(255, 212, 121, 0.2);
     }
-    .undo-btn:hover { background: rgba(217, 178, 92, 0.14); }
-    /* 全局焦点环用的是深金 #5c4823，压在深墨底上等于看不见，这里换成亮的那支 */
-    .undo-btn:focus-visible { outline-color: var(--gold-on-dark); }
+    .undo-btn:hover { background: rgba(255, 212, 121, 0.14); }
+    /* 全局焦点环是蓝的，压在深墨底上等于看不见，这里换成亮的那支 */
+    .undo-btn:focus-visible { outline-color: var(--on-dark); }
     @media (prefers-reduced-motion: reduce) {
-      .undo { transition: none; }
-      .undo { transform: translate(-50%, 0); }
+      .undo { transition: none; transform: translate(-50%, 0); }
     }
 
     /* ---------- Day 9：键盘焦点可见（WCAG 2.4.7） ---------- */
-    /* 之前只有 .del 和 .add-input 处理过焦点，其余控件全靠浏览器默认环 ——
-       在羊皮纸底色上不够明确，统一成金棕色描边（对底色 7.34:1，远高于 3:1 要求） */
     button:focus-visible,
     input:focus-visible,
     select:focus-visible,
     a:focus-visible,
     .link:focus-visible {
-      outline: 2px solid var(--gold-deep);
+      outline: 2px solid var(--accent);
       outline-offset: 2px;
     }
-    /* 尊重系统「减少动态效果」：此前只降级了三处主动效，装饰性过渡一并关掉 */
+    /* 尊重系统「减少动态效果」：入场动画、装饰性过渡、平滑滚动一并关掉 */
     @media (prefers-reduced-motion: reduce) {
       button, input, select, a, .link, .dot, .del, .tab, .filter-btn { transition: none; }
-      /* 入场序列与视图过渡一并关掉（只关过渡不够，动画本身也得停） */
-      .corps-bar, .head, .tabs, .view { animation: none; }
+      .corps-bar, .head, .tabs { animation: none; }
+      .views { scroll-behavior: auto; }
     }
   </style>
 </head>
@@ -849,12 +691,12 @@
           <path class="w1" d="M24 18 L14 15 L18.5 19 L11.5 20 L18 23 L14 28 L24 25 Z" fill="currentColor" opacity="0.35"/>
           <path class="w2" d="M24 18 L34 15 L29.5 19 L36.5 20 L30 23 L34 28 L24 25 Z" fill="currentColor" opacity="0.35"/>
           <path d="M24 5.5 C17.5 5.5 13.5 10.5 13.5 16.5 C13.5 21.5 16.5 25.5 20.5 26.8 L20.5 29 L27.5 29 L27.5 26.8 C31.5 25.5 34.5 21.5 34.5 16.5 C34.5 10.5 30.5 5.5 24 5.5 Z" fill="currentColor"/>
-          <circle cx="20.6" cy="17.5" r="1.7" fill="#1d211a"/>
-          <circle cx="27.4" cy="17.5" r="1.7" fill="#1d211a"/>
-          <path d="M22.3 21.5 Q24 23.2 25.7 21.5" stroke="#1d211a" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+          <circle cx="20.6" cy="17.5" r="1.7" fill="#ffffff"/>
+          <circle cx="27.4" cy="17.5" r="1.7" fill="#ffffff"/>
+          <path d="M22.3 21.5 Q24 23.2 25.7 21.5" stroke="#ffffff" stroke-width="1.3" fill="none" stroke-linecap="round"/>
           <path d="M24 28.5 L19.5 32.5 L18.5 42.5 L22 39.8 L24 41.8 L26 39.8 L29.5 42.5 L28.5 32.5 Z" fill="currentColor"/>
-          <path d="M18.8 27.2 Q24 30.2 29.2 27.2 L29.2 30.8 Q24 33.2 18.8 30.8 Z" fill="#a3352a"/>
-          <path d="M28.5 29.5 L35 35.5 L30.5 36 Z" fill="#a3352a"/>
+          <path d="M18.8 27.2 Q24 30.2 29.2 27.2 L29.2 30.8 Q24 33.2 18.8 30.8 Z" fill="#1c4fc0"/>
+          <path d="M28.5 29.5 L35 35.5 L30.5 36 Z" fill="#1c4fc0"/>
           <rect x="14.5" y="32" width="4" height="7" rx="1" fill="currentColor" opacity="0.85"/>
           <rect x="29.5" y="32" width="4" height="7" rx="1" fill="currentColor" opacity="0.85"/>
           <path d="M12.5 29 L18.5 34.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -888,6 +730,9 @@
       <button class="act" id="retryBtn" type="button">重试</button>
     </div>
 
+    <!-- Day 14：三视图装进一个浏览器原生横向滚动容器，手指左右滑即可切换。
+         惯性、回弹、跟手全部交给系统，JS 只负责「停下来之后」同步地址栏和标签 -->
+    <div class="views" id="views">
     <div class="view" id="viewToday">
       <!-- 倒数日 —— 取自滴答清单：只占一行，不占块。做成块就会抢主屏。
            没有纪念日数据时整条隐藏（占位数据只在 ?state=mock 下出现）
@@ -927,7 +772,7 @@
 
     </div>
 
-    <div class="view" id="viewReminders" hidden>
+    <div class="view" id="viewReminders">
       <section class="block" id="remBlock">
         <h2>提醒<span class="fold-count" id="remCount" hidden></span></h2>
         <div class="fold-body">
@@ -968,20 +813,13 @@
       </section>
     </div>
 
-    <div class="view" id="viewDone" hidden>
+    <div class="view" id="viewDone">
       <section class="block" id="doneBlock">
         <h2>已完成</h2>
         <ul id="doneList"></ul>
         <div class="empty" id="doneEmpty" hidden>还没有完成过的事项，去清单里勾掉一条。</div>
       </section>
     </div>
-
-    <div class="mascot">
-      <img src="assets/mascot.png" alt="同行的小兵">
-      <div class="mascot-bubble">
-        <span class="mascot-name">SCOUT</span>
-        <span class="mascot-line" id="mascotLine"></span>
-      </div>
     </div>
 
     <footer class="foot">
@@ -1141,27 +979,67 @@
     // ---------- 渲染 ----------
     var WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
-    // ---------- 视图路由（Day 13）----------
-    // 三个视图是同一份 DOM，切换只是改谁 hidden。好处：切走再切回，谁的输入框里
-    // 打了字、筛选停在哪个条件，全都还在 —— 不用自己存现场。
+    // ---------- 视图路由（Day 13 建 · Day 14 换成原生横滑）----------
+    // 三个视图常驻同一份 DOM：切走再切回，谁的输入框里打了字、筛选停在哪个条件，
+    // 全都还在 —— 不用自己存现场。
+    // Day 14 的两处关键改动：
+    //   ① 不再用 hidden 切换 —— hidden 会让相邻页在滑动过程中是空白的，看着像掉帧；
+    //      改成外层 #views 做浏览器原生横向滚动 + scroll-snap，惯性/回弹/跟手全交给系统。
+    //   ② 非当前页用 inert 摘出焦点顺序和读屏（浏览器不认 inert 时退回 aria-hidden）。
     var VIEWS = { today: 'viewToday', reminders: 'viewReminders', done: 'viewDone' };
+    var VIEW_ORDER = ['today', 'reminders', 'done'];
+    var viewsEl = document.getElementById('views');
+    var syncingScroll = 0;     // 程序滚动的时间戳：这段时间里的 scroll 不算「用户滑的」
 
     function currentView() {
       var v = location.hash.replace(/^#\/?/, '');
       return VIEWS[v] ? v : 'today';          // 认不出的 hash 一律回今日清单
     }
 
+    function viewIndex(name) {
+      var i = VIEW_ORDER.indexOf(name);
+      return i < 0 ? 0 : i;
+    }
+
+    function scrollToView(name) {
+      var w = viewsEl.clientWidth;
+      if (!w) return;                                        // 还没布局（加载态把 #views 藏了），等下一轮
+      var left = viewIndex(name) * w;
+      if (Math.abs(viewsEl.scrollLeft - left) < 2) return;   // 已经在这一页，别白滚一次
+      syncingScroll = Date.now();
+      viewsEl.scrollTo({ left: left, behavior: 'smooth' });
+    }
+
     function applyRoute() {
       var v = currentView();
       Object.keys(VIEWS).forEach(function (name) {
-        document.getElementById(VIEWS[name]).hidden = (name !== v);
+        var el = document.getElementById(VIEWS[name]);
+        var on = (name === v);
+        el.inert = !on;
+        el.setAttribute('aria-hidden', on ? 'false' : 'true');
       });
       Array.prototype.forEach.call(document.getElementById('tabs').children, function (b) {
         var on = b.getAttribute('data-v') === v;
         b.classList.toggle('is-on', on);
         b.setAttribute('aria-selected', on ? 'true' : 'false');   // 读屏器知道当前在第几个视图
       });
+      scrollToView(v);
     }
+
+    // 手指滑到位之后，再把地址栏和标签同步过去（惯性没停之前不打扰）
+    var settleTimer = null;
+    viewsEl.addEventListener('scroll', function () {
+      if (Date.now() - syncingScroll < 400) return;          // 这是程序滚动自己触发的（平滑滚动约 300ms）
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(function () {
+        var w = viewsEl.clientWidth;
+        if (!w) return;
+        var name = VIEW_ORDER[Math.round(viewsEl.scrollLeft / w)] || 'today';
+        if (name === currentView()) return;
+        syncingScroll = Date.now();                          // 改 hash 会回灌 applyRoute，别再滚一次
+        location.hash = '#/' + name;
+      }, 120);
+    }, { passive: true });
 
     document.getElementById('tabs').addEventListener('click', function (e) {
       var btn = e.target.closest('.tab');
@@ -1226,7 +1104,7 @@
         .filter(function (i) { return !i.done && i.date < today; })
         .sort(function (a, b) { return a.date < b.date ? -1 : 1; });
 
-      document.getElementById('mascotLine').textContent = mascotLine(todays.length, done, overdue.length);
+      // 看板娘立绘按 C 主题下线；台词函数 mascotLine() 保留，恢复时把 #mascot 块加回 HTML 即可
 
       // 空态两条腿：今天压根没加事项 → emptyHint；加了但当前筛不出来 → filterEmpty
       var shown = applyFilter(todays);
@@ -1914,6 +1792,8 @@
         if (!isDemo()) save();
         document.body.classList.remove('is-loading');
         render();
+        // 加载态把 #views 藏过（clientWidth 为 0，那一轮滚不动），这里补一次定位
+        applyRoute();
       }).catch(function (err) {
         document.body.classList.remove('is-loading');
         showError(err);
