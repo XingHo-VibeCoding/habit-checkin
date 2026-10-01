@@ -2,8 +2,12 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>每日打卡清单</title>
+  <!-- 不发版缓存：改完样式刷新就能看到最新版，不用每次手动清手机缓存 -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <style>
     :root {
       /* ---------- 极简浅色：白底 + 单一强调色 ----------
@@ -29,7 +33,9 @@
       --on-accent: #ffffff;
       --danger: #c93f35;       /* 4.89:1，只给逾期 */
       --danger-wash: rgba(201, 63, 53, 0.07);
-      --on-dark: #ffd479;      /* 深底撤销条上的字 */
+      /* 深底撤销条上的字。用主题蓝的亮色版 —— 主题蓝 #2f6feb 压在深墨底上只有 3.46:1 不合格，
+         #9ec1ff 是同色系的亮蓝，8.67:1。旧主题这里用的是亮金，换主题时漏改了 */
+      --on-dark: #9ec1ff;
 
       /* ---------- 字体（零外部请求：PRD C2 禁止外链，只能用系统自带） ---------- */
       --font-display: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -56,6 +62,10 @@
     body {
       margin: 0;
       padding: 20px 16px 32px;
+      /* 底部再叠一层安全区：手势条 / 小黑条会压住页脚。
+         单独写一条而不是并进上面的简写 —— 万一浏览器不认 env()，
+         只有这一条失效，32px 兜底还在。 */
+      padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
       min-height: 100vh;
       color: var(--ink);
       font-family: var(--font-body);
@@ -193,6 +203,7 @@
 
     .views {
       display: flex;
+      gap: 4px;
       align-items: flex-start;
       overflow-x: auto;
       overflow-y: hidden;
@@ -200,6 +211,7 @@
       overscroll-behavior-x: contain;
       -webkit-overflow-scrolling: touch;
       scroll-behavior: smooth;
+      will-change: scroll-position; /* 提前告知浏览器要滚，滚动走合成线程 */
       scrollbar-width: none;
       -ms-overflow-style: none;
     }
@@ -207,6 +219,13 @@
     .view {
       flex: 0 0 100%;
       min-width: 100%;
+      /* 每页左右留 12px 内边距 —— 方块不贴页面边缘；配合页间 4px 间隙，
+         滑动时相邻页内容不会看着互相穿插 */
+      padding: 0 12px;
+      overflow: hidden;
+      /* 提升为独立合成层：滑动时只合成不重绘，跟手更顺。
+         不影响布局 —— .undo 是 fixed 且在 .app 之外，不受这个包含块影响 */
+      transform: translateZ(0);
       scroll-snap-align: start;
       /* 不写 scroll-snap-stop: always —— 那会强制「一次滑动只准翻一页」，
          快甩一下也只能走一格，手感上就是「慢」。让它按惯性自然走，反正 mandatory 会吸附到整页 */
@@ -289,7 +308,7 @@
     }
     .anniv:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     /* 管理列表里的日期录入框：日期要显示「2026-10-22」，比分钟数宽一截 */
-    .an-date { flex: none !important; width: 132px; }
+    .an-date { flex: 0 1 132px !important; min-width: 96px; }
     li.an-past .title { color: var(--soft); }
     .anniv-tag {
       flex: none;
@@ -299,6 +318,21 @@
       color: var(--accent);
     }
     .anniv-text { min-width: 0; }
+    /* 每年重复勾选：整块可点（44px 触控高），不是只有那个小方框能点 */
+    .an-yearly {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 44px;
+      padding: 0 2px;
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .an-yearly input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+    .an-yearly:hover { color: var(--ink); }
     .cs-time {
       flex: none;
       width: 42px;
@@ -369,7 +403,7 @@
       gap: 12px;
       min-height: 46px;
       padding: 6px 6px 6px 2px;
-      margin: 0 -6px;
+      margin: 0; /* 原来 -6px 会让整行贴死页面边缘，滑动时看着像溢出；去掉后行随内边距内缩 */
       border-bottom: 1px solid var(--row-line);
       border-left: 2px solid transparent;
       border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
@@ -401,7 +435,14 @@
     .dot:active { transform: scale(0.92); }
     .dot:hover { border-color: var(--accent); }
     .dot.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-    .title { flex: 1; word-break: break-all; }
+    .title {
+      flex: 1;
+      /* min-width:0 —— flex 项默认 min-width:auto，长标题不肯压缩，整行被顶出卡片 */
+      min-width: 0;
+      word-break: break-all;
+      /* 超长英文串 / 网址：break-all 之外再兜一层，允许在任意处断行 */
+      overflow-wrap: anywhere;
+    }
     li.done .title { color: var(--soft); text-decoration: line-through; }
     .del {
       position: relative;
@@ -509,7 +550,13 @@
     /* 弱化只用底色，不降透明度（叠在深色字上只剩 1.9:1，Day 9 的老教训） */
     li.past { opacity: 1; background: var(--surface-sunk); }
     .rm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-    .rm-meta { font-size: 11px; line-height: 1.3; color: var(--muted); letter-spacing: 0.03em; }
+    .rm-meta {
+      font-size: 11px;
+      line-height: 1.3;
+      color: var(--muted);
+      letter-spacing: 0.03em;
+      overflow-wrap: anywhere;
+    }
     .export-row {
       display: flex;
       align-items: center;
@@ -519,11 +566,12 @@
     }
     .export-row .act:disabled { opacity: 0.45; cursor: not-allowed; }
     .export-row .act:disabled:hover { background: var(--surface-sunk); }
-    .export-tip { flex: 1; min-width: 140px; font-size: 11px; color: var(--soft); letter-spacing: 0.02em; }
+    .export-tip { flex: 1; min-width: 0; font-size: 11px; color: var(--soft); letter-spacing: 0.02em; }
     .rem-form { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
     .rem-row { display: flex; gap: 8px; flex-wrap: wrap; }
     .rem-row .add-input { flex: 1; min-width: 0; }
-    .lead-input { flex: none !important; width: 92px; }
+    /* 允许收缩（0 1）：系统字体放大 / 窄屏时不再把这一行顶出卡片 */
+    .lead-input { flex: 0 1 92px !important; min-width: 60px; }
     .lead-tip { flex: none; align-self: center; font-size: 11px; color: var(--soft); letter-spacing: 0.04em; }
 
     /* 逾期区 */
@@ -601,7 +649,8 @@
     }
     /* 窄屏：提醒表单第二行（时间 + 分钟 + 说明）挤不下时换行，避免横向溢出 */
     @media (max-width: 380px) {
-      .rem-row .lead-input { width: 76px; }
+      /* 改用 flex-basis：基础尺寸已由 flex 简写接管，写 width 不再生效 */
+      .rem-row .lead-input { flex-basis: 76px !important; }
       .lead-tip { flex-basis: 100%; text-align: left; }
     }
 
@@ -649,9 +698,9 @@
       font-size: 13px;
       letter-spacing: 0.1em;
       cursor: pointer;
-      -webkit-tap-highlight-color: rgba(255, 212, 121, 0.2);
+      -webkit-tap-highlight-color: rgba(158, 193, 255, 0.2);
     }
-    .undo-btn:hover { background: rgba(255, 212, 121, 0.14); }
+    .undo-btn:hover { background: rgba(158, 193, 255, 0.14); }
     /* 全局焦点环是蓝的，压在深墨底上等于看不见，这里换成亮的那支 */
     .undo-btn:focus-visible { outline-color: var(--on-dark); }
     @media (prefers-reduced-motion: reduce) {
@@ -787,6 +836,10 @@
             <input class="add-input an-date" id="anDate" type="date" aria-label="纪念日日期">
             <button class="add-btn" type="submit" aria-label="添加纪念日">+</button>
           </div>
+          <label class="an-yearly">
+            <input type="checkbox" id="anYearly">
+            <span>每年重复（生日、周年）</span>
+          </label>
         </form>
       </section>
     </div>
@@ -1433,6 +1486,31 @@
       return Math.round((d - t) / 86400000);
     }
 
+    /* ---------- 纪念日：每年重复 ---------- */
+    // 闰日兜底：2-29 平年不存在，new Date('2026-02-29') 会静默溢到 3-1，
+    // 所以解析完必须回查月日是否还对得上，对不上就退化到 2-28。
+    function annivDateOfYear(y, mmdd) {
+      var s = y + '-' + mmdd;
+      var d = new Date(s + 'T00:00:00');
+      var ok = !isNaN(d.getTime()) &&
+        d.getMonth() === parseInt(mmdd.slice(0, 2), 10) - 1 &&
+        d.getDate() === parseInt(mmdd.slice(3, 5), 10);
+      return ok ? s : y + '-02-28';
+    }
+
+    // 这个纪念日的「下一次」是哪天 —— 年度重复的会自动滚到下一次，所以永远不会变成「已过去」。
+    // 返回 { date: 'YYYY-MM-DD', nth: 第几次（仅年度重复有；生日第 26 个、结婚 5 周年） }
+    function annivNext(a) {
+      if (!a.yearly) return { date: a.date, nth: null };
+      var today = todayStr();
+      var mmdd = a.date.slice(5);
+      var y0 = parseInt(a.date.slice(0, 4), 10);
+      var yNow = parseInt(today.slice(0, 4), 10);
+      // 今年那次还没到（或就是今天）→ 就是今年；已经过了 → 看明年
+      var yTarget = annivDateOfYear(yNow, mmdd) >= today ? yNow : yNow + 1;
+      return { date: annivDateOfYear(yTarget, mmdd), nth: yTarget - y0 };
+    }
+
     function renderAnniv(list) {
       var bar = document.getElementById('annivBar');
       if (!list || !list.length) { bar.hidden = true; return; }
@@ -1440,23 +1518,30 @@
       // 全都过去了就整条隐藏 —— 倒数日的意义在未来，已经过去的日子归管理列表管，
       // 那里还能看到「已过去 N 天」，主屏没必要为它留位置。
       var near = annivSorted()[0];
-      if (!near || daysUntil(near.date) < 0) { bar.hidden = true; return; }
-      var n = daysUntil(near.date);
+      var nx = near && annivNext(near);
+      if (!near || daysUntil(nx.date) < 0) { bar.hidden = true; return; }
+      var n = daysUntil(nx.date);
+      var nth = nx.nth > 0 ? ' · 第 ' + nx.nth + ' 个' : '';
       document.getElementById('annivText').textContent =
-        n > 0 ? '距' + near.title + '还有 ' + n + ' 天'
-          : '就是今天 · ' + near.title;
+        n > 0 ? '距' + near.title + '还有 ' + n + ' 天' + nth
+          : '就是今天 · ' + near.title + nth;
       bar.hidden = false;
     }
 
     // 排序规则：未来的按「还有几天」升序在前，过去的按「刚过去」在前排后面。
     // 直接按天数升序会把过期最久的顶到第一位 —— 那是倒数条最不该显示的一条。
+    // 年度重复要按「下一次」的日子排 —— 生日过了自动滚到明年，不会掉进 past。
     function annivSorted() {
       var future = [], past = [];
       (state.anniv || []).forEach(function (a) {
-        (daysUntil(a.date) >= 0 ? future : past).push(a);
+        (daysUntil(annivNext(a).date) >= 0 ? future : past).push(a);
       });
-      future.sort(function (a, b) { return daysUntil(a.date) - daysUntil(b.date); });
-      past.sort(function (a, b) { return daysUntil(b.date) - daysUntil(a.date); });
+      future.sort(function (a, b) {
+        return daysUntil(annivNext(a).date) - daysUntil(annivNext(b).date);
+      });
+      past.sort(function (a, b) {
+        return daysUntil(annivNext(b).date) - daysUntil(annivNext(a).date);
+      });
       return future.concat(past);
     }
 
@@ -1467,7 +1552,8 @@
       document.getElementById('annivEmpty').hidden = list.length > 0;
 
       list.forEach(function (a) {
-        var n = daysUntil(a.date);
+        var nx = annivNext(a);
+        var n = daysUntil(nx.date);
         var li = document.createElement('li');
         li.className = n < 0 ? 'an-past' : '';
 
@@ -1475,11 +1561,15 @@
         main.className = 'rm-main';
         var title = document.createElement('span');
         title.className = 'title';
-        title.textContent = a.title;
+        title.textContent = a.title + (a.yearly ? ' ↻' : '');
         var meta = document.createElement('span');
         meta.className = 'rm-meta';
-        meta.textContent = a.date + ' · ' +
-          (n > 0 ? '还有 ' + n + ' 天' : n === 0 ? '就是今天' : '已过去 ' + (-n) + ' 天');
+        // 年度重复显示「每年 MM-DD」+ 第几次；一次性显示完整日期。
+        // 一次性且已过去 → 「已过去 N 天」，这就是「我们相遇已经有几天」那个数。
+        var when = a.yearly ? '每年 ' + a.date.slice(5) : a.date;
+        var nthTxt = nx.nth > 0 ? ' · 第 ' + nx.nth + ' 个' : '';
+        meta.textContent = when + ' · ' +
+          (n > 0 ? '还有 ' + n + ' 天' : n === 0 ? '就是今天' : '已过去 ' + (-n) + ' 天') + nthTxt;
         main.appendChild(title);
         main.appendChild(meta);
 
@@ -1496,8 +1586,8 @@
       });
     }
 
-    function addAnniv(title, date) {
-      state.anniv.push({ id: uid(), title: title, date: date });
+    function addAnniv(title, date, yearly) {
+      state.anniv.push({ id: uid(), title: title, date: date, yearly: !!yearly });
       save();
       render();
     }
@@ -1644,7 +1734,7 @@
     // ---------- 撤销条：反馈层③「可以反悔」 ----------
     // 删除是这个页面上唯一没法回头的操作。Day 10 把整行改成可点之后，手指落在行里时
     // ✕ 就在手边，误触概率反而高了 —— 退路必须补上，不然每次点错都是真的丢一条。
-    var UNDO_MS = 4000;                 // 撤销条的停留时长
+    var UNDO_MS = 2600;                 // 撤销条的停留时长（原 4000，实测嫌长；再短会来不及点）
     var pendingUndo = null;             // { kind, item, index }：一次只挂一笔，删新的会顶掉旧的
     var undoTimer = null;
 
@@ -1731,14 +1821,16 @@
 
     var anTitle = document.getElementById('anTitle');
     var anDate = document.getElementById('anDate');
+    var anYearly = document.getElementById('anYearly');
     document.getElementById('annivForm').addEventListener('submit', function (e) {
       e.preventDefault();
       var title = anTitle.value.trim();
       if (!title) return;                                    // 空名称：无反应（B1 同款）
       if (!anDate.value) { anDate.focus(); return; }          // 日期必填
-      addAnniv(title, anDate.value);
+      addAnniv(title, anDate.value, anYearly.checked);
       anTitle.value = '';
       anDate.value = '';
+      anYearly.checked = false;
       anTitle.focus();
     });
 
