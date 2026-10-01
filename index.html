@@ -1025,7 +1025,33 @@
     var VIEW_ORDER = ['today', 'reminders', 'done'];
     var viewsEl = document.getElementById('views');
     var tabInd = document.getElementById('tabInd');
+    var tabBtns = Array.prototype.slice.call(
+      document.getElementById('tabs').querySelectorAll('.tab'));   // 缓存住：高亮不用每次重新查 DOM
     var syncingScroll = 0;     // 程序滚动的时间戳：这段时间里的 scroll 不算「用户滑的」
+
+    // ---------- 页面几何：只量一次，滚动过程中绝不读布局 ----------
+    // ① 原来 scroll 回调里每帧都读 viewsEl.clientWidth —— 那是强制同步重排：
+    //    手指每动一下就重排一次，这是「滑着顿」的真凶。现在只在布局变化时量一次。
+    // ② 顺带修掉一个真 bug：页间加了 4px 缝之后，第 N 页的吸附点不再是 N×页宽，
+    //    而是 N×(页宽+缝)。原来仍按 N×页宽滚，点第三个标签会停在差 8px 的地方、
+    //    再被 mandatory 吸附拉回去 —— 那一下「二次修正」正是「点击不如滑动」的手感来源。
+    var geo = { step: 0, snaps: [] };
+
+    function measureGeo() {
+      var kids = viewsEl.children;
+      if (kids.length < VIEW_ORDER.length) return false;      // 还没渲染出来，等下一次
+      var cr = viewsEl.getBoundingClientRect();
+      var snaps = [];
+      for (var i = 0; i < VIEW_ORDER.length; i++) {
+        // 子元素在滚动内容里的坐标 = 它的视口位置 − 容器视口位置 + 已滚动量
+        snaps.push(kids[i].getBoundingClientRect().left - cr.left + viewsEl.scrollLeft);
+      }
+      var step = snaps[1] - snaps[0];
+      if (!(step > 0)) return false;        // 还没布局（加载态把 #views 藏了），这次不算
+      geo.snaps = snaps;
+      geo.step = step;
+      return true;
+    }
 
     function currentView() {
       var v = location.hash.replace(/^#\/?/, '');
@@ -1038,11 +1064,12 @@
     }
 
     function scrollToView(name) {
-      var w = viewsEl.clientWidth;
-      if (!w) return false;                                  // 还没布局（加载态把 #views 藏了），等下一轮
-      var left = viewIndex(name) * w;
+      if (!geo.step && !measureGeo()) return false;          // 还没布局，等下一轮
+      var left = geo.snaps[viewIndex(name)];
+      if (left == null) return false;
       if (Math.abs(viewsEl.scrollLeft - left) < 2) return false;   // 已经在这一页，别白滚一次
       syncingScroll = Date.now();
+      // 滚到真实吸附点 —— 不会像原来那样先停偏、再被 mandatory 拉回来
       viewsEl.scrollTo({ left: left, behavior: 'smooth' });
       return true;
     }
@@ -1054,12 +1081,11 @@
     }
 
     function setActiveTab(name) {
-      Array.prototype.forEach.call(document.getElementById('tabs')
-        .querySelectorAll('.tab'), function (b) {
-          var on = b.getAttribute('data-v') === name;
-          b.classList.toggle('is-on', on);
-          b.setAttribute('aria-selected', on ? 'true' : 'false');   // 读屏器知道当前在第几个视图
-        });
+      tabBtns.forEach(function (b) {
+        var on = b.getAttribute('data-v') === name;
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');   // 读屏器知道当前在第几个视图
+      });
     }
 
     function applyRoute() {
@@ -1075,13 +1101,14 @@
       if (!scrollToView(v)) paintInd(viewIndex(v));
     }
 
-    // 滑动期间：指示条实时跟手；地址栏等滑停了再同步
+    // 滑动期间：指示条实时跟手；地址栏等滑停了再同步。
+    // ⚠️ 整个回调里不读任何布局属性（clientWidth / getBoundingClientRect）——
+    //    每帧读一次 = 每帧一次强制同步重排，那一帧就会顿。宽和吸附点只在 measureGeo() 里量。
     var settleTimer = null;
     var lastIdx = 0;
     viewsEl.addEventListener('scroll', function () {
-      var w = viewsEl.clientWidth;
-      if (!w) return;
-      var frac = viewsEl.scrollLeft / w;
+      if (!geo.step && !measureGeo()) return;
+      var frac = viewsEl.scrollLeft / geo.step;
       paintInd(frac);                                        // ① 指示条：永远跟手，不看是谁触发的滚动
       var i = Math.round(frac);
       if (i !== lastIdx) {                                   // ② 文字高亮：过半就换，不等滑停
@@ -1091,14 +1118,20 @@
       if (Date.now() - syncingScroll < 400) return;          // 这是程序滚动自己触发的（平滑滚动约 300ms）
       clearTimeout(settleTimer);
       settleTimer = setTimeout(function () {
-        var w = viewsEl.clientWidth;
-        if (!w) return;
-        var name = VIEW_ORDER[Math.round(viewsEl.scrollLeft / w)] || 'today';
+        var name = VIEW_ORDER[Math.round(viewsEl.scrollLeft / geo.step)] || 'today';
         if (name === currentView()) return;
         syncingScroll = Date.now();                          // 改 hash 会回灌 applyRoute，别再滚一次
         location.hash = '#/' + name;
       }, 120);
     }, { passive: true });
+
+    // 布局一变（转屏 / 窗口缩放 / 软键盘弹出）吸附点就变了：重新量，并让指示条归位
+    function remeasure() {
+      measureGeo();
+      if (geo.step) paintInd(viewIndex(currentView()));
+    }
+    window.addEventListener('resize', remeasure);
+    window.addEventListener('orientationchange', remeasure);
 
     document.getElementById('tabs').addEventListener('click', function (e) {
       var btn = e.target.closest('.tab');
@@ -1109,6 +1142,7 @@
     window.addEventListener('hashchange', applyRoute);
     // 首次进来没有 hash：补一个，地址栏立刻显示当前在哪个视图（截图也靠它）
     if (!location.hash) history.replaceState(null, '', location.pathname + location.search + '#/today');
+    measureGeo();          // 先量好吸附点，再走第一次路由（否则首屏点标签会算错位置）
     applyRoute();
 
     // ---------- 筛选（Day 12）----------
