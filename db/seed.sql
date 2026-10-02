@@ -4,12 +4,11 @@
 -- 幂等：跑几次结果都一样，不会因为主键冲突报错。
 --
 -- 【做法】先删 id 以 'seed-' 开头的行，再插入。
--- 【为什么不用 upsert】
---    MySQL 的幂等写法是 INSERT ... ON DUPLICATE KEY UPDATE / INSERT IGNORE，
---    SQLite 的写法是 INSERT OR IGNORE —— 两套方言不通用。
---    而 DELETE + INSERT 两边都能跑，而且天然幂等：跑几次数据都一模一样。
---    本项目的 schema.sql / seed.sql 要同时满足「云端 MySQL 能跑」和
---    「我本地能实跑验证」，跨方言是硬要求，所以选了这个写法。
+--   为什么不用 upsert：MySQL 写 INSERT ... ON DUPLICATE KEY UPDATE / INSERT IGNORE，
+--   SQLite 写 INSERT OR IGNORE —— 两套方言不通用。
+--   而 DELETE + INSERT 两边都能跑，而且天然幂等：跑几次数据都一模一样。
+--   本项目的 SQL 要同时满足「云端 MySQL 能跑」和「我本地能实跑验证」，
+--   跨方言是硬要求，所以选了这个写法。
 --
 -- ⚠️【代价，必须知道】它会删掉 id 以 'seed-' 开头的行。
 --    所以真实数据的 id 绝不能用 seed- 前缀 —— 这个前缀是种子专用的。

@@ -99,20 +99,33 @@ curl -s https://<CloudBase 环境域名>/api/health
 
 ## 数据模型（Day 16）
 
-建表脚本在 `db/schema.sql`，种子在 `db/seed.sql`，本地验证脚本 `db/verify_local.py`（9/9 通过）。
+脚本都在 `db/`：`schema.sql`（建表）、`seed.sql`（种子）、`verify.sql`（select 验证）、
+`verify_local.py`（本地 SQLite 实跑，**11/11 通过**）、`db/README.md`（控制台执行步骤）。
+**表结构就是从本文件推导的**：契约里写 `/api/items` 和 `/api/reminders`，表就是 `items` 和 `reminders`。
 
 ### 两张表与关联字段
 
-| 表 | 存什么 | 关键字段 |
+| 表 | 存什么 | 字段 |
 | --- | --- | --- |
-| `items` | 每日清单条目 —— 今天要勾的那几件事 | `id`, `title`, `plan_date`, `done`, `created_at`, `done_at` |
-| `reminders` | 提醒 —— 到点要响的那几件事 | `id`, **`item_id`**, `title`, `remind_at`, `lead_minutes`, `done` |
+| `items` | 每日清单条目 —— 今天要勾的那几件事 | `id` PK、`title`、`plan_date`、`done`、`created_at`、`done_at` |
+| `reminders` | 提醒 —— 到点要响的那几件事 | `id` PK、**`item_id` FK**、`title`、`remind_at`、`lead_minutes`、`done` |
 
 **关联字段：`reminders.item_id` → `items.id`**
 
 - 有值 = 这条提醒挂在某条清单上，清单删了它跟着删（`ON DELETE CASCADE`）
 - **为 NULL = 独立提醒**，跟任何清单无关（比如「高铁去上海」）
 - 所以 `item_id` **必须可空**：定成 `NOT NULL` 的话，独立提醒这种真实存在的数据就存不进来
+
+### 约束一览
+
+| 表 | 约束 | 挡住什么 |
+| --- | --- | --- |
+| 两表 | `PRIMARY KEY (id)` | 重复 id |
+| `reminders` | `FOREIGN KEY (item_id) → items(id) ON DELETE CASCADE` | 指向不存在的清单；删清单留孤儿提醒 |
+| `items` | `CHECK (plan_date LIKE '____-__-__')` | `'2026/10/02'`、`'明天'` 这类不规范的日期 |
+| 两表 | `CHECK (done IN (0, 1))` | 布尔位被写成 2 |
+| `reminders` | `CHECK (lead_minutes >= 0)` | 负数提前量 |
+| 两表 | `NOT NULL` + `DEFAULT` | 缺字段、缺默认值 |
 
 ### 映射到上面的接口
 
@@ -133,10 +146,21 @@ curl -s https://<CloudBase 环境域名>/api/health
 
 ### 与 CloudBase 的关系
 
-`db/schema.sql` / `db/seed.sql` 刻意写成 **MySQL 与 SQLite 都能跑的子集**：
-云端没开通时，我本地用 SQLite 实跑验证；Henry 在控制台开通 MySQL 后，同一份文件直接跑。
-唯一不幂等的是索引那几行（MySQL 不支持 `CREATE INDEX IF NOT EXISTS`），
-但任务只要求 `seed.sql` 幂等，建表本来就是一次性动作。
+`db/` 下的 SQL 刻意写成 **MySQL 与 SQLite 都能跑的子集**：云端没开通时我本地用 SQLite 实跑验证，
+Henry 在控制台开通 MySQL 后同一份文件直接跑。类型一律挑两边都认的
+（`VARCHAR(n)` / `CHAR(n)` / `TINYINT(1)` / `INT`）。
+
+**可重复执行是怎么做到的（两个脚本手段不同，因为诉求不同）**：
+
+| 脚本 | 手段 | 代价 |
+| --- | --- | --- |
+| `schema.sql` | `DROP TABLE IF EXISTS` + `CREATE TABLE`（先删子表再删父表） | ⚠️ **会连同真实数据一起删**，只在建表 / 重置环境时跑 |
+| `seed.sql` | `DELETE FROM t WHERE id LIKE 'seed-%'` + `INSERT` | ⚠️ 会删掉 `seed-` 前缀的行，所以真实数据 id 绝不能用这个前缀 |
+
+为什么 seed 不用 upsert：MySQL 写 `INSERT IGNORE` / `ON DUPLICATE KEY UPDATE`，
+SQLite 写 `INSERT OR IGNORE`，**两套方言不通用**；跨方言是硬要求（要能本地验），所以选了 DELETE + INSERT。
+
+控制台执行步骤与 select 验证语句见 `db/README.md` 与 `db/verify.sql`。
 
 ---
 
