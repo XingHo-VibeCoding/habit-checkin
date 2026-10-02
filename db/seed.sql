@@ -7,7 +7,7 @@
 --   为什么不用 upsert：MySQL 写 INSERT ... ON DUPLICATE KEY UPDATE / INSERT IGNORE，
 --   SQLite 写 INSERT OR IGNORE —— 两套方言不通用。
 --   而 DELETE + INSERT 两边都能跑，而且天然幂等：跑几次数据都一模一样。
---   本项目的 SQL 要同时满足「云端 MySQL 能跑」和「我本地能实跑验证」，
+--   本项目的 SQL 要同时满足「云端 PostgreSQL / MySQL 能跑」和「我本地能实跑验证」，
 --   跨方言是硬要求，所以选了这个写法。
 --
 -- ⚠️【代价，必须知道】它会删掉 id 以 'seed-' 开头的行。

@@ -33,7 +33,7 @@
 
 | Day 15++ | **后端起步（Day 15 正式清单）**：CloudBase 环境开通（环境 ID `habit-checkin-d9giln6ke6594e88b`，上海，**体验版 3000 点**，到期 2027-04-02）→ 部署 `health` 云函数（Node.js 20.19，代码在 `cloudfunctions/health/index.js`）→ HTTP 网关路由 `/api/health`（GET）→ curl 200 返回 `{ ok:true, data:{ status:'ok', service:'habit-checkin', time:"...Z", version:'day15' } }`。产出 `api-contract.md`：统一信封 `{ok,data}` / `{ok:false,error:{code,message}}`、错误码表、Day 16–20 未实现接口占位、CloudBase 开通部署附录。**⚠️ 前端今天仍完全走 localStorage，不接后端** |
 
-| Day 16 | **数据模型 + 建表 + 种子**：两张核心表 `items`（每日清单）与 `reminders`（提醒），关联字段 **`reminders.item_id` → `items.id`** —— 刻意**可空**，因为「高铁去上海」这类提醒不挂任何清单，定成 NOT NULL 就存不进来；删清单级联删掉挂在它下面的提醒。产出 `db/schema.sql`（字段类型逐个写理由）、`db/seed.sql`（用 DELETE+INSERT 保证跨 MySQL/SQLite 幂等）、`db/verify_local.py`（本地 SQLite 实跑 **11/11**：两表各 6 行、schema 与 seed 重复执行都不报错且行数不变、JOIN 出 4 条、独立提醒 2 条、级联删除与外键拦截都生效）。另附 `db/verify.sql`（控制台 select 验证语句）与 `db/README.md`（CloudBase MySQL 开通与执行步骤） |
+| Day 16 | **数据模型 + 建表 + 种子**：两张核心表 `items`（每日清单）与 `reminders`（提醒），关联字段 **`reminders.item_id` → `items.id`** —— 刻意**可空**，因为「高铁去上海」这类提醒不挂任何清单，定成 NOT NULL 就存不进来；删清单级联删掉挂在它下面的提醒。产出 `db/schema.sql`（字段类型逐个写理由）、`db/seed.sql`（用 DELETE+INSERT 保证跨 MySQL/SQLite 幂等）、`db/verify_local.py`（本地 SQLite 实跑 **11/11**：两表各 6 行、schema 与 seed 重复执行都不报错且行数不变、JOIN 出 4 条、独立提醒 2 条、级联删除与外键拦截都生效）。另附 `db/verify.sql`（控制台 select 验证语句）与 `db/README.md`（CloudBase PostgreSQL 执行步骤） |
 
 ## 本地运行
 

@@ -1,10 +1,11 @@
 -- ===========================================================================
 -- habit-checkin · 数据模型与建表（Day 16）
 -- ---------------------------------------------------------------------------
--- 目标库：CloudBase MySQL 数据库（支持原生 SQL）。
--- 本文件同时兼容 SQLite —— 这样在云端开通之前，我本地就能实跑验证
+-- 目标库：CloudBase PostgreSQL 数据库（Henry 截图显示默认是 PostgreSQL，
+-- 支持原生 SQL）。
+-- 本文件同时兼容 SQLite / MySQL —— 这样在云端开通之前，我本地就能实跑验证
 -- （见 db/verify_local.py）。类型一律挑两边都认的：
---   VARCHAR(n) / CHAR(n) / TINYINT(1) / INT / TEXT
+--   VARCHAR(n) / CHAR(n) / SMALLINT / INT / TEXT
 --
 -- 【可重复执行】用 DROP TABLE IF EXISTS + CREATE TABLE，跑几次都行。
 --   顺序必须「先删子表 reminders、再删父表 items」—— 反了会被外键拦住。
@@ -53,8 +54,11 @@ CREATE TABLE items (
   -- 它没有时区，转成时间戳反而会引入「算出来差一天」的问题。
   plan_date    CHAR(10)     NOT NULL,
 
-  -- 是否完成。SQLite 没有 BOOLEAN，TINYINT(1) 是 MySQL 的布尔别名，两边都认 0/1。
-  done         TINYINT(1)   NOT NULL DEFAULT 0,
+  -- 是否完成。用 SMALLINT 不用 BOOLEAN / TINYINT(1)：
+  --   PostgreSQL 有 BOOLEAN 但没有 TINYINT，MySQL 没有真正的 BOOLEAN（TINYINT(1) 是它的别名），
+  --   SQLite 有 BOOLEAN 但底层就是整数。
+  --   只有 SMALLINT 是三家都认、且都能老实存 0/1 的类型 —— 这就是跨方言的代价。
+  done         SMALLINT     NOT NULL DEFAULT 0,
 
   -- 下面两个是「时间轴上的点」，统一 ISO 8601 UTC（带 Z），跟 api-contract.md 一致。
   -- 存字符串而不是 DATETIME：前端本来就产 new Date().toISOString()，
@@ -80,7 +84,7 @@ CREATE TABLE reminders (
   id           VARCHAR(36)  NOT NULL,
 
   -- 外键 → items.id。可空 = 独立提醒（理由见文件头）。
-  -- 类型必须和 items.id 完全一致（都是 VARCHAR(36)），MySQL 才让建这个外键。
+  -- 类型必须和 items.id 完全一致（都是 VARCHAR(36)），各 SQL 库才认这个外键。
   item_id      VARCHAR(36)  NULL,
 
   title        VARCHAR(200) NOT NULL,
@@ -94,7 +98,7 @@ CREATE TABLE reminders (
   -- 字符串没法比大小、没法做算术，将来「提前 2 小时的提醒」这种需求就没法写。
   lead_minutes INT          NOT NULL DEFAULT 0,
 
-  done         TINYINT(1)   NOT NULL DEFAULT 0,
+  done         SMALLINT     NOT NULL DEFAULT 0,
 
   PRIMARY KEY (id),
 

@@ -146,9 +146,9 @@ curl -s https://<CloudBase 环境域名>/api/health
 
 ### 与 CloudBase 的关系
 
-`db/` 下的 SQL 刻意写成 **MySQL 与 SQLite 都能跑的子集**：云端没开通时我本地用 SQLite 实跑验证，
-Henry 在控制台开通 MySQL 后同一份文件直接跑。类型一律挑两边都认的
-（`VARCHAR(n)` / `CHAR(n)` / `TINYINT(1)` / `INT`）。
+`db/` 下的 SQL 刻意写成 **PostgreSQL / MySQL / SQLite 都能跑的子集**：
+云端没开通时我本地用 SQLite 实跑验证，Henry 在控制台 PostgreSQL 里直接跑。
+类型一律挑三家都认的（`VARCHAR(n)` / `CHAR(n)` / `SMALLINT` / `INT`）。
 
 **可重复执行是怎么做到的（两个脚本手段不同，因为诉求不同）**：
 
@@ -158,7 +158,8 @@ Henry 在控制台开通 MySQL 后同一份文件直接跑。类型一律挑两�
 | `seed.sql` | `DELETE FROM t WHERE id LIKE 'seed-%'` + `INSERT` | ⚠️ 会删掉 `seed-` 前缀的行，所以真实数据 id 绝不能用这个前缀 |
 
 为什么 seed 不用 upsert：MySQL 写 `INSERT IGNORE` / `ON DUPLICATE KEY UPDATE`，
-SQLite 写 `INSERT OR IGNORE`，**两套方言不通用**；跨方言是硬要求（要能本地验），所以选了 DELETE + INSERT。
+PostgreSQL 写 `ON CONFLICT DO NOTHING`，SQLite 写 `INSERT OR IGNORE` ——
+**三套方言不通用**；跨方言是硬要求（要能本地验），所以选了 DELETE + INSERT。
 
 控制台执行步骤与 select 验证语句见 `db/README.md` 与 `db/verify.sql`。
 

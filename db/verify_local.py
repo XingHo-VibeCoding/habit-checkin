@@ -3,14 +3,14 @@
 Day 16 验证：不依赖云端，用本地 SQLite 实跑 db/ 下的三个 SQL 文件。
 
 【为什么用 SQLite 验】
-    CloudBase 的 MySQL 要 Henry 在控制台点开通（2~3 分钟），我这边连不上云端。
+    CloudBase 的 PostgreSQL 是 Henry 环境里已经有的数据库，我这边连不上云端。
     但 schema.sql / seed.sql 是刻意写成「两种方言都能吃」的子集，
     所以先用 SQLite 在本地把这几件事证一遍：
         schema.sql 重复执行不报错 / 建表能成 / 种子能灌 /
         每张表 >=5 行 / seed.sql 重复执行不报错且行数不变 /
         关联 JOIN 查得出 / 独立提醒存得进 / 删清单会级联删提醒 /
         外键真的在拦 / verify.sql 里的语句全都跑得通
-    云端开通后，同样的文件在 MySQL 里再跑一次即可。
+    云端确认可用后，同样的文件在 PostgreSQL 里再跑一次即可。
 
 【用法】
     python db/verify_local.py
