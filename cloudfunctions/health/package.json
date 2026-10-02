@@ -1,0 +1,10 @@
+{
+  "name": "health",
+  "version": "1.0.0",
+  "description": "Day 15 云函数：/api/health 健康检查",
+  "main": "index.js",
+  "scripts": {
+    "test": "node -e \"require('./index.js').main({httpMethod:'GET'}).then(r=>console.log(r.body||JSON.stringify(r)))\""
+  },
+  "dependencies": {}
+}

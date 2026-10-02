@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "data": {
+    "status": "ok",
+    "service": "habit-checkin",
+    "time": "2026-10-02T06:53:38.431Z",
+    "version": "day15-mock"
+  }
+}
