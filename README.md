@@ -31,6 +31,8 @@
 | Day 15 | 倒数纪念日支持**每年重复**（生日 / 周年）：勾选后自动滚到下一次，**永远不会变成「已过去」**，并显示「第 N 个」；闰日 2-29 在平年退化到 2-28（不溢到 3-1）；老数据无 `yearly` 字段天然兼容 |
 | Day 15+ | **PWA 第 1 步**：`manifest.json` + 192/512 图标（蓝底白勾，全出血，`purpose: any maskable`），head 加 `<link rel="manifest">` 与 `theme-color`。安卓浏览器菜单里出现「添加到主屏幕」，加完是真桌面图标、以 standalone 运行（无地址栏）。**故意不含 Service Worker** —— 今天刚加禁缓存 meta 解决「手机看不到更新」，SW 会把 index.html 再缓存住，等于把痛点请回来。第 2 步（SW 离线缓存）留到以后决定 |
 
+| Day 15++ | **后端起步（Day 15 正式清单）**：CloudBase 环境开通（环境 ID `habit-checkin-d9giln6ke6594e88b`，上海，**体验版 3000 点**，到期 2027-04-02）→ 部署 `health` 云函数（Node.js 20.19，代码在 `cloudfunctions/health/index.js`）→ HTTP 网关路由 `/api/health`（GET）→ curl 200 返回 `{ ok:true, data:{ status:'ok', service:'habit-checkin', time:"...Z", version:'day15' } }`。产出 `api-contract.md`：统一信封 `{ok,data}` / `{ok:false,error:{code,message}}`、错误码表、Day 16–20 未实现接口占位、CloudBase 开通部署附录。**⚠️ 前端今天仍完全走 localStorage，不接后端** |
+
 ## 本地运行
 
 **必须起本地服务器，不要双击打开。** 两个原因：一是 `file://` 下不同浏览器对 localStorage 的处理不一致（数据可能存不住或跟 `http://` 下的不互通）；二是截图、验证都要求在 `localhost` 地址下看。
