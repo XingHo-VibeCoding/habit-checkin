@@ -1,0 +1,7 @@
+{
+  "name": "items",
+  "version": "1.0.0",
+  "description": "Day 17 云函数：GET /api/items 读 items 表",
+  "main": "index.js",
+  "dependencies": {}
+}

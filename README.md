@@ -35,6 +35,8 @@
 
 | Day 16 | **数据模型 + 建表 + 种子**：两张核心表 `items`（每日清单）与 `reminders`（提醒），关联字段 **`reminders.item_id` → `items.id`** —— 刻意**可空**，因为「高铁去上海」这类提醒不挂任何清单，定成 NOT NULL 就存不进来；删清单级联删掉挂在它下面的提醒。产出 `db/schema.sql`（字段类型逐个写理由）、`db/seed.sql`（用 DELETE+INSERT 保证跨 MySQL/SQLite 幂等）、`db/verify_local.py`（本地 SQLite 实跑 **11/11**：两表各 6 行、schema 与 seed 重复执行都不报错且行数不变、JOIN 出 4 条、独立提醒 2 条、级联删除与外键拦截都生效）。另附 `db/verify.sql`（控制台 select 验证语句）与 `db/README.md`（CloudBase PostgreSQL 执行步骤） |
 
+| Day 17 | **GET 读接口**：`GET /api/items` + `GET /api/reminders` 两个云函数（`cloudfunctions/items/`、`cloudfunctions/reminders/`），读 CloudBase PostgreSQL 真数据，套契约信封 `{ok:true,data:[...]}` 返回。关键决策：**不直连 PG 的 TCP 端口**（体验版两条直连路径都走不通），改走平台自带的 PostgREST 层 `https://<envId>.api.tcloudbasegateway.com/v1/rdb/rest/<table>` + 服务端 API Key（网关解成 `service_role`，绕过 RLS —— 本环境无用户体系、无 RLS 策略，转发调用方 token 会查到 0 行）。用内置 `https` 而非 `fetch`（运行时可能是 Node 16）。`data` **直接用数据库列名不做前端映射**，映射推到 Day 18。新增错误码 `CONFIG_MISSING` / `UPSTREAM`（排查动作不同，不合并进 `INTERNAL`）。本地 `cloudfunctions/test_logic.js` 打桩 https 实跑 **37/37 通过**（方法守卫、参数校验、查询串拼接、信封形状、上游错误处理）。部署步骤、凭据配置、排障表见 `cloudfunctions/README.md` |
+
 ## 本地运行
 
 **必须起本地服务器，不要双击打开。** 两个原因：一是 `file://` 下不同浏览器对 localStorage 的处理不一致（数据可能存不住或跟 `http://` 下的不互通）；二是截图、验证都要求在 `localhost` 地址下看。

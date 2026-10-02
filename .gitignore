@@ -32,3 +32,6 @@ desktop.ini
 # 测试与覆盖率
 coverage/
 .nyc_output/
+
+# 云函数临时打包产物（源码在 cloudfunctions/<name>/，zip 不上传仓库）
+cloudfunctions/*.zip

@@ -67,33 +67,155 @@ curl -s https://<CloudBase 环境域名>/api/health
 { "ok": false, "error": { "code": "INTERNAL", "message": "..." } }
 ```
 
-约定错误码（今天只用得到 `INTERNAL`）：
+约定错误码（`INTERNAL` 是 Day 15 定的，Day 17 补了后两个）：
 
 | code | 场景 |
 | --- | --- |
 | `INTERNAL` | 未捕获异常 |
-| `BAD_REQUEST` | 参数不合法（Day 16+ 的业务接口才用） |
+| `BAD_REQUEST` | 参数不合法 / 方法不允许 |
 | `NOT_FOUND` | 资源不存在 |
-| `UNAUTHORIZED` | 未登录 / 身份无效（Day 16+ 引入用户体系后才有） |
+| `UNAUTHORIZED` | 未登录 / 身份无效（引入用户体系后才有） |
+| `CONFIG_MISSING` | **Day 17 新增**：云函数缺环境变量（拿不到 API Key） |
+| `UPSTREAM` | **Day 17 新增**：依赖（PG REST 层）返回非 2xx 或不是 JSON |
+
+**为什么后两个要单独成码，不合并进 `INTERNAL`**：它们的排查动作完全不同 ——
+`CONFIG_MISSING` 要去函数配置里补环境变量，`UPSTREAM` 要去查数据库和网关。
+合并成一个码的话，每次出错都得先读消息再猜是哪一类，部署阶段的排障速度会掉一半。
 
 ---
 
-## 尚未实现的接口（Day 16–20，今天只占位，不实现）
+## GET /api/items（Day 17 已实现）
+
+拉取清单条目，读的是 PostgreSQL 的 `items` 表。
+
+### 请求
+
+```bash
+curl -s https://<CloudBase 环境域名>/api/items
+curl -s "https://<CloudBase 环境域名>/api/items?date=2026-10-02"
+curl -s "https://<CloudBase 环境域名>/api/items?limit=2"
+```
+
+| 参数 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `date` | 否 | 不过滤 | `YYYY-MM-DD`，只返回 `plan_date` 等于它的行。格式不对直接 400，不往下拼 SQL |
+| `limit` | 否 | `100` | 返回条数上限，取值 **1–200**。设上限是因为不设的话 `?limit=99999999` 会把读接口打成全表扫描 |
+
+### 响应 200
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": "seed-item-01",
+      "title": "读一章书",
+      "plan_date": "2026-10-02",
+      "done": 0,
+      "created_at": "2026-10-02T00:00:00.000Z",
+      "done_at": null
+    }
+  ]
+}
+```
+
+**`data` 就是数据库行的原样数组，字段名用数据库列名**（`plan_date` 而不是前端的 `date`）。
+
+为什么不在这里就转成前端的形状：转换规则记在本文件「前端字段映射」一节，
+但**转换动作留到 Day 18 前端接入时做**。今天两端同时改，一旦字段名对不上，
+分不清是接口错了还是前端错了 —— 现在这样「库里有什么接口就吐什么」，出错时一眼能定位。
+
+排序固定为 `plan_date` 升序、同日期按 `created_at` 升序，前端拿到即可直接渲染，不用再排。
+
+### 失败
+
+| 情况 | 响应 |
+| --- | --- |
+| 方法不是 GET | 405 `BAD_REQUEST` |
+| `date` 不是 `YYYY-MM-DD` | 400 `BAD_REQUEST` |
+| `limit` 非数字 / <1 / >200 | 400 `BAD_REQUEST` |
+| 云函数没配 API Key | 500 `CONFIG_MISSING` |
+| 数据库 REST 层报错 | 500 `UPSTREAM`（消息里带上游状态码） |
+
+### 它怎么读到数据库的
+
+云函数不直连 PostgreSQL 的 TCP 端口 —— **体验版环境里 TCP 直连是走不通的**（内网要内网互联、外网开关也不给开）。
+
+走的是 CloudBase 自带的 PostgREST 层：
+
+```
+GET https://<envId>.api.tcloudbasegateway.com/v1/rdb/rest/items?select=*&limit=100
+Authorization: Bearer <服务端 API Key>
+```
+
+API Key 被网关解成 `service_role`，绕过 RLS。
+**为什么用 service_role 而不是转发调用方 token**：本环境还没做用户体系，表上也没有 RLS 策略，
+RLS 开着但零策略 = 拒绝所有非 service_role 的访问，转发 token 那条路会查到 0 行。
+
+---
+
+## GET /api/reminders（Day 17 已实现）
+
+拉取提醒，读的是 PostgreSQL 的 `reminders` 表。
+
+### 请求
+
+```bash
+curl -s https://<CloudBase 环境域名>/api/reminders
+curl -s "https://<CloudBase 环境域名>/api/reminders?item_id=seed-item-01"
+```
+
+| 参数 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `item_id` | 否 | 不过滤 | 只返回挂在这条清单下的提醒 |
+| `limit` | 否 | `100` | 同 `/api/items` |
+
+⚠️ **不传 `item_id` 时，独立提醒（`item_id` 为 `NULL`）也会一起返回** —— 这是刻意的。
+前端要画的是「今天所有会响的提醒」，不是「某条清单的附属品」，所以默认不过滤。
+
+### 响应 200
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": "seed-rem-05",
+      "item_id": null,
+      "title": "高铁去上海",
+      "remind_at": "2026-10-05T01:00:00.000Z",
+      "lead_minutes": 60,
+      "done": 0
+    }
+  ]
+}
+```
+
+同样用数据库列名。排序固定 `remind_at` 升序。
+
+`item_id` 为 `null` 的行就是独立提醒 —— 这正是 Day 16 把 `item_id` 定成**可空**的原因。
+
+### 失败
+
+同 `/api/items`，外加：`item_id` 超过 64 字符 → 400 `BAD_REQUEST`（防畸形输入进 URL）。
+
+---
+
+## 尚未实现的接口（Day 18–20，只占位）
 
 这些**先写在这里是为了让前端知道将来会有什么**，避免到时候接口来回改。
-今天一动都不要动 —— 任务清单里「今日不做：真实业务接口、数据库建表、跨域配置」明确排除了。
 
 | 接口 | 用途 | 状态 |
 | --- | --- | --- |
-| `GET /api/items` | 拉取清单 | 未实现 |
-| `POST /api/items` | 新增一条 | 未实现 |
-| `PATCH /api/items/:id` | 改（勾掉 / 改名） | 未实现 |
-| `DELETE /api/items/:id` | 删除 | 未实现 |
-| `GET /api/reminders` | 拉取提醒 | 未实现 |
-| `GET /api/anniversaries` | 拉取倒数纪念日 | 未实现 |
+| `GET /api/items` | 拉取清单 | ✅ **Day 17 已实现**（见上文） |
+| `GET /api/reminders` | 拉取提醒 | ✅ **Day 17 已实现**（见上文） |
+| `POST /api/items` | 新增一条 | 未实现（Day 18） |
+| `PATCH /api/items/:id` | 改（勾掉 / 改名） | 未实现（Day 18） |
+| `DELETE /api/items/:id` | 删除 | 未实现（Day 18） |
+| `GET /api/anniversaries` | 拉取倒数纪念日 | 未实现（**表也没建**，Day 18） |
 
-⚠️ **前端现在仍然完全走 localStorage**（`habit-checkin:v1` 一个 key），
-不是"先用着 mock 以后切" —— 是**今天根本不接后端**。上面这些接口落地前，数据不会上云。
+⚠️ **前端现在仍然完全走 localStorage**（`habit-checkin:v1` 一个 key）。
+上面两个 GET 已经能返回真数据，但前端还没接 —— 接的那天要同时做字段映射（见数据模型一节）。
 
 ---
 
@@ -135,7 +257,7 @@ curl -s https://<CloudBase 环境域名>/api/health
 | `GET /api/reminders` | `reminders`（可带 `?item_id=` 过滤挂在某条清单下的） |
 | `GET /api/anniversaries` | ⚠️ **尚未建表**，按 Day 16 降级条款可延到 Day 18 |
 
-### 前端字段映射（Day 17 写读接口时照此转换）
+### 前端字段映射（Day 18 前端接入时照此转换）
 
 | 前端（localStorage） | 数据库 |
 | --- | --- |
@@ -143,6 +265,11 @@ curl -s https://<CloudBase 环境域名>/api/health
 | `items.createdAt` / `doneAt` | `created_at` / `done_at` |
 | `reminders.at` | `remind_at` —— ⚠️ 前端存的是**本地时间串**，入库要转 UTC |
 | `reminders.lead` | `lead_minutes` |
+
+⚠️ **Day 17 的决定：两个 GET 接口不做这层转换，直接吐数据库列名。**
+理由写在 `/api/items` 一节 —— 转换动作推迟到前端接入那天，
+避免接口和前端同时改、字段名对不上时定位不了是哪边的锅。
+所以这张表是**接前端那天**的对照表，不是今天的验收项。
 
 ### 与 CloudBase 的关系
 
