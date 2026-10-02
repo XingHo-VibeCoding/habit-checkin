@@ -35,3 +35,6 @@ coverage/
 
 # 云函数临时打包产物（源码在 cloudfunctions/<name>/，zip 不上传仓库）
 cloudfunctions/*.zip
+
+# Skill 打包临时产物
+/cloudbase-pg-event-function.zip
