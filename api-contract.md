@@ -152,6 +152,10 @@ API Key 被网关解成 `service_role`，绕过 RLS。
 **为什么用 service_role 而不是转发调用方 token**：本环境还没做用户体系，表上也没有 RLS 策略，
 RLS 开着但零策略 = 拒绝所有非 service_role 的访问，转发 token 那条路会查到 0 行。
 
+**SQL 注入怎么防**：代码里没有拼接原始 SQL。查询条件（`date`、`item_id`、`limit`）都是作为 URL 参数传给 PostgREST，
+`date` 和 `limit` 在拼 URL 之前会先校验格式，`item_id` 会 `encodeURIComponent`。PostgREST 自己会把这些参数当绑定值处理，
+不存在字符串拼接 SQL 的注入面。等价于「参数化查询」，只是交互协议是 HTTP 而不是 `PREPARE`。
+
 ---
 
 ## GET /api/reminders（Day 17 已实现）
