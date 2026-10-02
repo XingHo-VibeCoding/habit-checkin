@@ -10,6 +10,10 @@ Day 16 产出。**表结构是从 `api-contract.md` 推导的**，不是另起�
 | `verify.sql` | select 验证语句，在控制台跑来确认数据对 |
 | `verify_local.py` | 本地 SQLite 实跑验证，不用等云端开通（11/11 通过） |
 
+> **状态（2026-10-02）**：`schema.sql` / `seed.sql` / `verify.sql` 三份脚本已在
+> **CloudBase PostgreSQL** 控制台实跑通过 —— 建表成功、两表各 6 行、
+> select 验证第 ⑤ 条查出独立提醒 2 行（高铁去上海、牙医预约）。
+
 ---
 
 ## 一、在 CloudBase 控制台执行
