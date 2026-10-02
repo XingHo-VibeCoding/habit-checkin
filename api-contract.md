@@ -97,6 +97,49 @@ curl -s https://<CloudBase 环境域名>/api/health
 
 ---
 
+## 数据模型（Day 16）
+
+建表脚本在 `db/schema.sql`，种子在 `db/seed.sql`，本地验证脚本 `db/verify_local.py`（9/9 通过）。
+
+### 两张表与关联字段
+
+| 表 | 存什么 | 关键字段 |
+| --- | --- | --- |
+| `items` | 每日清单条目 —— 今天要勾的那几件事 | `id`, `title`, `plan_date`, `done`, `created_at`, `done_at` |
+| `reminders` | 提醒 —— 到点要响的那几件事 | `id`, **`item_id`**, `title`, `remind_at`, `lead_minutes`, `done` |
+
+**关联字段：`reminders.item_id` → `items.id`**
+
+- 有值 = 这条提醒挂在某条清单上，清单删了它跟着删（`ON DELETE CASCADE`）
+- **为 NULL = 独立提醒**，跟任何清单无关（比如「高铁去上海」）
+- 所以 `item_id` **必须可空**：定成 `NOT NULL` 的话，独立提醒这种真实存在的数据就存不进来
+
+### 映射到上面的接口
+
+| 接口 | 落到哪张表 |
+| --- | --- |
+| `GET/POST/PATCH/DELETE /api/items` | `items` |
+| `GET /api/reminders` | `reminders`（可带 `?item_id=` 过滤挂在某条清单下的） |
+| `GET /api/anniversaries` | ⚠️ **尚未建表**，按 Day 16 降级条款可延到 Day 18 |
+
+### 前端字段映射（Day 17 写读接口时照此转换）
+
+| 前端（localStorage） | 数据库 |
+| --- | --- |
+| `items.date` | `plan_date` |
+| `items.createdAt` / `doneAt` | `created_at` / `done_at` |
+| `reminders.at` | `remind_at` —— ⚠️ 前端存的是**本地时间串**，入库要转 UTC |
+| `reminders.lead` | `lead_minutes` |
+
+### 与 CloudBase 的关系
+
+`db/schema.sql` / `db/seed.sql` 刻意写成 **MySQL 与 SQLite 都能跑的子集**：
+云端没开通时，我本地用 SQLite 实跑验证；Henry 在控制台开通 MySQL 后，同一份文件直接跑。
+唯一不幂等的是索引那几行（MySQL 不支持 `CREATE INDEX IF NOT EXISTS`），
+但任务只要求 `seed.sql` 幂等，建表本来就是一次性动作。
+
+---
+
 ## 前端怎么在「真数据 / mock」之间切
 
 现成的开关（Day 8 就有，不用新写）：
