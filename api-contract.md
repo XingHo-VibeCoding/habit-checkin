@@ -309,21 +309,41 @@ curl -s "https://<CloudBase 环境域名>/api/reminders?item_id=seed-item-01"
 
 ---
 
-## 尚未实现的接口（Day 19–20，只占位）
+## 尚未实现的接口（Day 20+，只占位）
 
 这些**先写在这里是为了让前端知道将来会有什么**，避免到时候接口来回改。
 
 | 接口 | 用途 | 状态 |
 | --- | --- | --- |
-| `GET /api/items` | 拉取清单 | ✅ **Day 17 已实现**（见上文） |
-| `GET /api/reminders` | 拉取提醒 | ✅ **Day 17 已实现**（见上文） |
-| `POST /api/items` | 新增一条 | ✅ **Day 18 已实现**（见上文） |
-| `PATCH /api/items/:id` | 改（勾掉 / 改名） | 未实现（Day 19） |
-| `DELETE /api/items/:id` | 删除 | 未实现（Day 19–20） |
-| `GET /api/anniversaries` | 拉取倒数纪念日 | 未实现（**表也没建**，Day 19–20） |
+| `GET /api/items` | 拉取清单 | ✅ **Day 17 已实现**，Day 19 重构为分层 |
+| `GET /api/reminders` | 拉取提醒 | ✅ **Day 17 已实现**，Day 19 重构为分层 |
+| `POST /api/items` | 新增一条 | ✅ **Day 18 已实现**，Day 19 重构为分层 |
+| `PATCH /api/items/:id` | 改（勾掉 / 改名） | 未实现（第 4 周） |
+| `DELETE /api/items/:id` | 删除 | 未实现（第 4 周） |
+| `GET /api/anniversaries` | 拉取倒数纪念日 | 未实现（**表也没建**） |
 
 ⚠️ **前端现在仍然完全走 localStorage**（`habit-checkin:v1` 一个 key）。
 上面三个接口已经能读写真数据，但前端还没接 —— 接的那天要同时做字段映射（见数据模型一节）。
+
+---
+
+## Day 19 重构说明（实现细节，不影响本契约）
+
+**契约层面零改动** —— 路径、字段名、状态码、响应形状、错误码全部不变，
+所以这份契约在 Day 19 前后完全适用。变的只有代码内部怎么组织：
+
+| | 重构前 | 重构后 |
+| --- | --- | --- |
+| items | `items/index.js`（查库+ 接口混在一起，464 行） | `items/index.js`（接口层，354 行）+ `items/itemsRepository.js`（数据访问层，178 行） |
+| reminders | `reminders/index.js`（170 行） | `reminders/index.js`（接口层，116 行）+ `reminders/remindersRepository.js`（数据访问层，130 行） |
+
+分层判据：**「换掉数据库，这段代码要不要改？」** 要改 → repository；不用改 → 接口层。
+
+部署探针：两个函数的响应头 `X-Version` 都从`day18`/`day17` 变成了 `day19`。
+
+回归验证结果见 `cloudfunctions/README.md` 第 4.5 节（含两个踩过的坑：返回顺序会变、
+比对前要排除自己刚写入的数据）。
+
 
 ---
 

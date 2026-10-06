@@ -161,7 +161,9 @@ var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
   check('排序拼进去了', captured.path.indexOf('order=plan_date.asc%2Ccreated_at.asc') >= 0, captured.path);
   check('limit 拼进去了', captured.path.indexOf('limit=5') >= 0, captured.path);
   check('带上了 Bearer 鉴权头', captured.headers.Authorization === 'Bearer test-key', JSON.stringify(captured.headers));
-  check('响应头带 X-Version 探针', r.headers['X-Version'] === 'day18', JSON.stringify(r.headers));
+  // 部署探针：版本号故意跟着 Day 走。改版本时这行会红 —— 那是提醒你
+  // 「线上跑的还是旧代码」，不是代码坏了。
+  check('响应头带 X-Version 探针（day19）', r.headers['X-Version'] === 'day19', JSON.stringify(r.headers));
   check('响应头允许跨域', r.headers['Access-Control-Allow-Origin'] === '*');
   check('GET 请求不带 Prefer 头', captured.headers.Prefer === undefined, JSON.stringify(captured.headers));
 

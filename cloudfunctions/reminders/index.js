@@ -1,50 +1,29 @@
-// CloudBase 云函数 /api/reminders（Day 17）
+// CloudBase 云函数 /api/reminders（Day 19 重构：数据库代码已拆到 remindersRepository.js）
 // ---------------------------------------------------------------------------
 // 作用：把 PostgreSQL 里的 reminders 表读出来，套上契约信封 { ok, data } 返回。
 //
-// 部署方式（控制台）：
-//   1. 云函数 → 新建 → 函数名 reminders → 运行环境 Node.js → 粘贴本文件
-//   2. 函数配置 → 开启「API Key」（或手动加环境变量 CLOUDBASE_APIKEY）
-//   3. HTTP 访问服务 → 新建 → 路径 /api/reminders → 关联函数 reminders → 方法 GET
+// 【这一层现在只管三件事】
+//   ① 接请求（解析 method / query）
+//   ② 调函数（校验参数 → 调 repository）
+//   ③ 返响应（套契约信封 { ok, data }）
 //
-// 与 items/index.js 是两份独立部署的包（CloudBase 按函数打包），所以公共逻辑
-// 在这边重复了一份 —— 这是刻意的：拆成共享文件就得改走 zip 上传，部署步骤变多、
-// 出错面变大。等函数数量到四个以上再考虑抽公共层。
+// 「怎么读数据库」「查询串怎么拼」「凭据从哪来」全在 remindersRepository.js 里。
+// Day 19 重构的判据：**换掉数据库，这段代码要不要改？** 要改 → repository；不用改 → 这里。
+//
+// 部署方式（控制台）：
+//   1. 云函数 → reminders → 更新代码 → **传 zip**（现在有两个文件了，一起打包）
+//   2. 函数配置 → 开启「API Key」
+//   3. HTTP 访问服务 → /api/reminders → 关联本函数 → 方法 GET
 'use strict';
 
-var https = require('https');
+// ★ 唯一一处 require。数据访问层——只经它，不直接碰 https。
+var repo = require('./remindersRepository');
 
-var VERSION = 'day17';
-var TABLE = 'reminders';
+var VERSION = 'day19';
 var DEFAULT_LIMIT = 100;
 var MAX_LIMIT = 200;
-var TIMEOUT_MS = 8000;
 
-var DEFAULT_ENV_ID = 'habit-checkin-d9giln6ke6594e88b';
-var API_KEY_VARS = ['CLOUDBASE_APIKEY', 'CLOUDBASE_API_KEY', 'TCB_API_KEY', 'API_KEY'];
-var ENV_ID_VARS = ['CLOUDBASE_ENV_ID', 'TCB_ENV_ID', 'TCB_ENV'];
-
-function pick(names) {
-  for (var i = 0; i < names.length; i++) {
-    var v = process.env[names[i]];
-    if (v && String(v).trim()) return String(v).trim();
-  }
-  return '';
-}
-function envId() {
-  return pick(ENV_ID_VARS) || DEFAULT_ENV_ID;
-}
-function apiKey() {
-  return pick(API_KEY_VARS);
-}
-
-function envHint() {
-  var keys = Object.keys(process.env || {}).filter(function (k) {
-    return /CLOUDBASE|TCB|APIKEY|API_KEY|POSTGRES|^PG/i.test(k);
-  });
-  return keys.sort().join(', ') || '(一个都没有)';
-}
-
+// ① 统一信封。形状由 api-contract.md 定死。
 function ok(data) {
   return { ok: true, data: data };
 }
@@ -52,12 +31,15 @@ function fail(code, message) {
   return { ok: false, error: { code: code, message: message } };
 }
 
+// ② HTTP 访问服务的「集成响应」包装。
 function withHttp(statusCode, payload) {
   return {
     statusCode: statusCode,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
       'Cache-Control': 'no-store',
       'X-Service': 'habit-checkin',
       'X-Version': VERSION
@@ -66,6 +48,8 @@ function withHttp(statusCode, payload) {
   };
 }
 
+// ③ 取查询参数。CloudBase 的 HTTP 云函数在不同版本里给的字段不一样：
+//    queryStringParameters（对象）或 queryString（原始串）。两种都认。
 function parseQuery(event) {
   var e = event || {};
   if (e.queryStringParameters && typeof e.queryStringParameters === 'object') {
@@ -84,42 +68,8 @@ function parseQuery(event) {
   return out;
 }
 
-function pgRest(table, query) {
-  return new Promise(function (resolve, reject) {
-    var req = https.request(
-      {
-        hostname: envId() + '.api.tcloudbasegateway.com',
-        path: '/v1/rdb/rest/' + table + (query ? '?' + query : ''),
-        method: 'GET',
-        headers: {
-          Authorization: 'Bearer ' + apiKey(),
-          Accept: 'application/json'
-        },
-        timeout: TIMEOUT_MS
-      },
-      function (res) {
-        var chunks = [];
-        res.on('data', function (d) { chunks.push(d); });
-        res.on('end', function () {
-          var text = Buffer.concat(chunks).toString('utf8');
-          if (res.statusCode < 200 || res.statusCode >= 300) {
-            reject(new Error('PG REST 返回 ' + res.statusCode + '：' + text.slice(0, 300)));
-            return;
-          }
-          try {
-            resolve(JSON.parse(text));
-          } catch (e2) {
-            reject(new Error('PG REST 返回的不是 JSON：' + text.slice(0, 300)));
-          }
-        });
-      }
-    );
-    req.on('timeout', function () { req.destroy(new Error('PG REST 超时（' + TIMEOUT_MS + 'ms）')); });
-    req.on('error', reject);
-    req.end();
-  });
-}
-
+// ④ 校验 limit。为什么设上限：不设的话 ?limit=99999999 会把整表拉回来，
+//    读接口被打成全表扫描。
 function toLimit(raw) {
   var s = raw == null ? String(DEFAULT_LIMIT) : String(raw);
   if (!/^\d+$/.test(s)) return { error: 'limit 必须是正整数，收到 "' + s + '"' };
@@ -128,7 +78,7 @@ function toLimit(raw) {
   return { value: n };
 }
 
-// ⑨ 入口。
+// ⑤ 入口。
 exports.main = async function (event) {
   var method = (event && event.httpMethod) || 'GET';
   if (method !== 'GET') {
@@ -136,15 +86,17 @@ exports.main = async function (event) {
   }
 
   try {
-    if (!apiKey()) {
+    // 先查凭据，缺了就直接说缺哪个 —— 别等到请求发出去报 401 才猜。
+    if (!repo.hasCredential()) {
+      var hint = repo.credentialHint();
       return withHttp(500, fail('CONFIG_MISSING',
         '云函数拿不到 API Key。请在函数配置里开启 API Key，或手动加环境变量 ' +
-        API_KEY_VARS.join(' / ') + '。当前可见的相关变量名：' + envHint()));
+        hint.vars.join(' / ') + '。当前可见的相关变量名：' + hint.visible));
     }
 
     var q = parseQuery(event);
 
-    // ⑩ item_id 过滤：契约里写明「可带 ?item_id= 过滤挂在某条清单下的」。
+    // ⑥ item_id 过滤：契约里写明「可带 ?item_id= 过滤挂在某条清单下的」。
     //    不传就是全量 —— 独立提醒（item_id 为 NULL）也会一起返回，
     //    这是刻意的：前端要画的是「今天所有要响的提醒」，不该默认被过滤掉。
     var itemId = q.item_id == null ? '' : String(q.item_id);
@@ -155,14 +107,8 @@ exports.main = async function (event) {
     var lim = toLimit(q.limit);
     if (lim.error) return withHttp(400, fail('BAD_REQUEST', lim.error));
 
-    // ⑪ 按提醒时间升序：前端拿到就是能直接按时间画的顺序，不用再排一遍。
-    var parts = ['select=*'];
-    if (itemId) parts.push('item_id=eq.' + encodeURIComponent(itemId));
-    parts.push('order=' + encodeURIComponent('remind_at.asc'));
-    parts.push('limit=' + lim.value);
-
-    var rows = await pgRest(TABLE, parts.join('&'));
-
+    // ★ 只调 repository —— 查询串怎么拼、凭据从哪来，它自己知道。
+    var rows = await repo.list({ itemId: itemId, limit: lim.value });
     return withHttp(200, ok(rows));
   } catch (e) {
     return withHttp(500, fail('UPSTREAM', String((e && e.message) || e)));
