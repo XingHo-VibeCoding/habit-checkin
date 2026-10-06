@@ -3,9 +3,9 @@
 Day 15 产出。**这份文件定义「前端和后端之间怎么说话」**，跟具体实现分开 ——
 先把契约定下来，后面换云厂商、换语言，只要照着契约实现就行，前端不用跟着改。
 
-> ⚠️ 当前状态（2026-10-02）：**云函数还没上线**，CloudBase 开通要 Henry 本人实名（我代替不了）。
-> 现在 `/api/health` 只有一个**静态 mock**（见文末），用来把链路打通、把契约验一遍；
-> 真云函数开通后要把它替换掉，路径和返回结构保持这里定义的不变。
+> ⚠️ 当前状态（2026-10-06）：`/api/health`、`GET /api/items`、`GET /api/reminders`、`POST /api/items`
+> 四个接口已有真云函数（Day 15 / 17 / 18）。`PATCH`、`DELETE` 仍未实现。
+> **前端目前仍然完全走 localStorage，还没接后端** —— 接的那天见「前端字段映射」一节。
 
 ---
 
@@ -17,7 +17,7 @@ Day 15 产出。**这份文件定义「前端和后端之间怎么说话」**，
 | 云函数 Base URL | `https://<CloudBase 环境域名>/api`（开通后填，见下「待填」） |
 | 请求 / 响应格式 | `application/json; charset=utf-8` |
 | 时间格式 | ISO 8601，统一 UTC（`2026-10-02T06:50:00.000Z`）—— 别用本地时间字符串，跨时区会错 |
-| 跨域 CORS | **Day 16–20 再配**（今日不做）。未配之前浏览器直连会被拦，只能服务端 curl 验 |
+| 跨域 CORS | ✅ Day 18 已配（`Access-Control-Allow-Origin: *` + `OPTIONS` 预检） |
 | 失败结构 | 一律 `{ ok: false, error: { code, message } }`，不用 HTTP 码猜原因 |
 
 **失败结构的理由**：HTTP 状态码只说「哪一类错」（4xx/5xx），说不清「具体哪一步错了」。
@@ -72,15 +72,18 @@ curl -s https://<CloudBase 环境域名>/api/health
 | code | 场景 |
 | --- | --- |
 | `INTERNAL` | 未捕获异常 |
-| `BAD_REQUEST` | 参数不合法 / 方法不允许 |
+| `BAD_REQUEST` | 参数不合法 / 方法不允许 / 请求体格式错 |
 | `NOT_FOUND` | 资源不存在 |
 | `UNAUTHORIZED` | 未登录 / 身份无效（引入用户体系后才有） |
 | `CONFIG_MISSING` | **Day 17 新增**：云函数缺环境变量（拿不到 API Key） |
 | `UPSTREAM` | **Day 17 新增**：依赖（PG REST 层）返回非 2xx 或不是 JSON |
+| `DUPLICATE` | **Day 18 新增**：主键撞了，即重复提交 |
 
 **为什么后两个要单独成码，不合并进 `INTERNAL`**：它们的排查动作完全不同 ——
 `CONFIG_MISSING` 要去函数配置里补环境变量，`UPSTREAM` 要去查数据库和网关。
 合并成一个码的话，每次出错都得先读消息再猜是哪一类，部署阶段的排障速度会掉一半。
+`DUPLICATE` 同理：它是**正常业务结果**（用户手快点了两下），不是故障，
+报成 500 会让监控误判，也会让前端弹「服务器出错了」这种吓人的提示。
 
 ---
 
@@ -122,7 +125,7 @@ curl -s "https://<CloudBase 环境域名>/api/items?limit=2"
 **`data` 就是数据库行的原样数组，字段名用数据库列名**（`plan_date` 而不是前端的 `date`）。
 
 为什么不在这里就转成前端的形状：转换规则记在本文件「前端字段映射」一节，
-但**转换动作留到 Day 18 前端接入时做**。今天两端同时改，一旦字段名对不上，
+但**转换动作留到前端接入那天（Day 20）做**。两端同时改，一旦字段名对不上，
 分不清是接口错了还是前端错了 —— 现在这样「库里有什么接口就吐什么」，出错时一眼能定位。
 
 排序固定为 `plan_date` 升序、同日期按 `created_at` 升序，前端拿到即可直接渲染，不用再排。
@@ -155,6 +158,107 @@ RLS 开着但零策略 = 拒绝所有非 service_role 的访问，转发 token �
 **SQL 注入怎么防**：代码里没有拼接原始 SQL。查询条件（`date`、`item_id`、`limit`）都是作为 URL 参数传给 PostgREST，
 `date` 和 `limit` 在拼 URL 之前会先校验格式，`item_id` 会 `encodeURIComponent`。PostgREST 自己会把这些参数当绑定值处理，
 不存在字符串拼接 SQL 的注入面。等价于「参数化查询」，只是交互协议是 HTTP 而不是 `PREPARE`。
+
+---
+
+## POST /api/items（Day 18 已实现）
+
+新增一条清单条目。**这是第一个会改数据库的接口** —— Day 15–17 全是只读，
+写操作第一次进来，防重复提交就成了核心问题。
+
+### 请求
+
+```bash
+curl -s -X POST https://<CloudBase 环境域名>/api/items \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"lq8f2k","title":"读一章书","plan_date":"2026-10-06"}'
+```
+
+body 是一个 JSON 对象，字段如下（**只认这些，多一个都报错**）：
+
+| 字段 | 必填 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `id` | ✅ | string | **幂等键**，由调用方生成。重试时必须用同一个 id。见下节。只能含字母数字 `-` `_`，≤36 字 |
+| `title` | ✅ | string | ≤200 字，前后空格自动 trim，不能是空串或纯空格 |
+| `plan_date` | ✅ | string | `YYYY-MM-DD`，且**必须是真实存在的日子**（`2026-02-31` 会被拒） |
+| `done` | ❌ | 0/1 | 默认 `0`。其它值一律拒绝（不收 `"0"` 字符串） |
+| `created_at` | ❌ | string | 省略则取服务器当前时间（UTC ISO 串） |
+| `done_at` | ❌ | string \| null | 默认 `null`。给了就必须是能解析的时间串，且 `done` 必须是 1 |
+
+⚠️ **前端字段名不能直接发**：`date` / `createdAt` / `doneAt` 发过来会被拒（报「不认识的字段」）。
+这是故意的 —— 静默忽略会得到一个 `plan_date` 为空的请求，数据库只回一句
+`NOT NULL violation`，指向错误的排查方向。转换表见「前端字段映射」。
+
+### 响应 201
+
+```json
+{
+  "ok": true,
+  "data": {
+    "id": "lq8f2k",
+    "title": "读一章书",
+    "plan_date": "2026-10-06",
+    "done": 0,
+    "created_at": "2026-10-06T06:50:00.000Z",
+    "done_at": null
+  }
+}
+```
+
+`data` 是**数据库回读的那一行**（`Prefer: return=representation`），不是回显发出去的请求体。
+两者理论上相同，但用回读能证明「真的写进去了」，而不是「我以为写进去了」。
+`data` 是对象不是数组 —— 一次 POST 只对应一行。
+
+### 防重复提交：为什么 id 必须由调用方生成
+
+**要防的是什么**：同一条内容被提交两次 —— 用户手快点两下「添加」、网络卡了自动重发、页面卡住用户又点了一次。
+
+**不要防的是什么**：内容不同的两条。今天读两本书，第二本不叫重复，不该被挡。
+
+**机制**：`id` 是主键，做幂等键。同一条内容提交两次带的是同一个 id，第二次撞主键 → `409`。
+
+```
+同一个 id 第一次  →  201，库里多一行
+同一个 id 第二次  →  409 DUPLICATE，库里行数不变
+不同的 id 两次    →  两条 201，两行都入库（合法，不该被挡）
+```
+
+**为什么 id 不能由服务端生成**：那样每次请求都是「新的一条」，手快点两下就插两条，
+幂等键形同虚设。**发请求的一方必须持有 id** —— 只有它知道「这两条是不是同一件事」。
+
+**为什么不靠「标题查重」**：会把合法内容也挡掉；而且查重和插入之间有时间差（两个请求都查到
+「没有」→ 都插 → 两行都进去了），是竞态，比不防更糟。
+
+**⚠️ 为什么代码里死也不能加 `Prefer: resolution=merge-duplicates`**：
+那个头会把主键冲突从「报错」变成**静默 upsert** —— 重复提交不报错，
+还把老那一行覆盖成新内容。这比不防更糟，因为用户以为在新增，实际在悄悄改数据。
+本地测试里有一条断言专门盯这个（`Prefer 头绝不含 resolution`），改坏了立刻红。
+
+### 失败
+
+| 情况 | 响应 | 说明 |
+| --- | --- | --- |
+| 同 `id` 已存在 | `409 DUPLICATE` | 提示里会说「换一个 id」 |
+| 缺 `id` / `title` / `plan_date` | `400 BAD_REQUEST` | 提示是中文，直接可展示 |
+| `title` 超 200 字 | `400 BAD_REQUEST` | |
+| `plan_date` 格式错或日子不存在 | `400 BAD_REQUEST` | |
+| `done` 不是 0/1 | `400 BAD_REQUEST` | |
+| `done=0` 却给了 `done_at` | `400 BAD_REQUEST` | 自相矛盾 |
+| 出现不认识的字段 | `400 BAD_REQUEST` | 提示会列出「不认识哪个字段 + 允许哪些」 |
+| body 不是合法 JSON / 是数组 | `400 BAD_REQUEST` | 数组不接受（今日不做批量） |
+| 上游 4xx（约束不满足） | `400 BAD_REQUEST` | 消息带上游原文 |
+| 上游 5xx | `502 UPSTREAM` | |
+| 方法不是 GET/POST/OPTIONS | `405 BAD_REQUEST` | |
+
+**所有校验都在打数据库之前做完**：非法输入一个字节都不会写进库里。
+理由是数据库的 CHECK / NOT NULL 是最后一道防线，不是输入校验 ——
+靠它们挡下请求，拿到的是 PostgreSQL 的原文报错，不是能给人看的提示。
+
+### `2026-02-31` 这种「格式对但日子不存在」为什么单独查
+
+数据库的 CHECK 只验形状（`LIKE '____-__-__'`），`2026-02-31` 能过。
+所以代码里多查一层真实存在性（含闰年）。
+宁可现在告诉用户「这天不存在」，也别写进去之后排序时才发现。
 
 ---
 
@@ -205,7 +309,7 @@ curl -s "https://<CloudBase 环境域名>/api/reminders?item_id=seed-item-01"
 
 ---
 
-## 尚未实现的接口（Day 18–20，只占位）
+## 尚未实现的接口（Day 19–20，只占位）
 
 这些**先写在这里是为了让前端知道将来会有什么**，避免到时候接口来回改。
 
@@ -213,13 +317,13 @@ curl -s "https://<CloudBase 环境域名>/api/reminders?item_id=seed-item-01"
 | --- | --- | --- |
 | `GET /api/items` | 拉取清单 | ✅ **Day 17 已实现**（见上文） |
 | `GET /api/reminders` | 拉取提醒 | ✅ **Day 17 已实现**（见上文） |
-| `POST /api/items` | 新增一条 | 未实现（Day 18） |
-| `PATCH /api/items/:id` | 改（勾掉 / 改名） | 未实现（Day 18） |
-| `DELETE /api/items/:id` | 删除 | 未实现（Day 18） |
-| `GET /api/anniversaries` | 拉取倒数纪念日 | 未实现（**表也没建**，Day 18） |
+| `POST /api/items` | 新增一条 | ✅ **Day 18 已实现**（见上文） |
+| `PATCH /api/items/:id` | 改（勾掉 / 改名） | 未实现（Day 19） |
+| `DELETE /api/items/:id` | 删除 | 未实现（Day 19–20） |
+| `GET /api/anniversaries` | 拉取倒数纪念日 | 未实现（**表也没建**，Day 19–20） |
 
 ⚠️ **前端现在仍然完全走 localStorage**（`habit-checkin:v1` 一个 key）。
-上面两个 GET 已经能返回真数据，但前端还没接 —— 接的那天要同时做字段映射（见数据模型一节）。
+上面三个接口已经能读写真数据，但前端还没接 —— 接的那天要同时做字段映射（见数据模型一节）。
 
 ---
 
@@ -259,9 +363,9 @@ curl -s "https://<CloudBase 环境域名>/api/reminders?item_id=seed-item-01"
 | --- | --- |
 | `GET/POST/PATCH/DELETE /api/items` | `items` |
 | `GET /api/reminders` | `reminders`（可带 `?item_id=` 过滤挂在某条清单下的） |
-| `GET /api/anniversaries` | ⚠️ **尚未建表**，按 Day 16 降级条款可延到 Day 18 |
+| `GET /api/anniversaries` | ⚠️ **尚未建表**，按 Day 16 降级条款可延到 Day 19–20 |
 
-### 前端字段映射（Day 18 前端接入时照此转换）
+### 前端字段映射（Day 20 前端接入时照此转换）
 
 | 前端（localStorage） | 数据库 |
 | --- | --- |
@@ -270,10 +374,11 @@ curl -s "https://<CloudBase 环境域名>/api/reminders?item_id=seed-item-01"
 | `reminders.at` | `remind_at` —— ⚠️ 前端存的是**本地时间串**，入库要转 UTC |
 | `reminders.lead` | `lead_minutes` |
 
-⚠️ **Day 17 的决定：两个 GET 接口不做这层转换，直接吐数据库列名。**
+⚠️ **GET 和 POST 都不做这层转换，直接用数据库列名。**
 理由写在 `/api/items` 一节 —— 转换动作推迟到前端接入那天，
 避免接口和前端同时改、字段名对不上时定位不了是哪边的锅。
-所以这张表是**接前端那天**的对照表，不是今天的验收项。
+所以这张表是**接前端那天**的对照表，不是接口的验收项。
+POST 更是**主动拒绝**前端字段名（发 `date` 会得到「不认识的字段：date」）。
 
 ### 与 CloudBase 的关系
 
@@ -321,17 +426,22 @@ PostgreSQL 写 `ON CONFLICT DO NOTHING`，SQLite 写 `INSERT OR IGNORE` ——
 
 ---
 
-## 今天的验收方式
+## 验收方式（历史记录）
 
-1. `curl` 健康检查 → 返回上面那个 JSON（`ok: true`）
-2. 手机浏览器打开前端公网地址 → 同伴能打开
-3. 本文件在仓库里
+Day 15 的验收项，全部早已达成：
 
-**当前只有 2、3 达成**，1 是静态 mock（地址见下），真云函数等开通。
+1. `curl` 健康检查 → `{ ok: true, ... }` ✅
+2. 手机浏览器打开前端公网地址 → 同伴能打开 ✅
+3. 本文件在仓库里 ✅
 
-静态 mock 地址：`https://daily-checkin-list.app.workbuddy.host/api/health.json`
-（⚠️ 不是真云函数，是发布目录里的一个 JSON 文件，用来验「前端能不能按契约解析」。
-CloudBase 开通后要换成 `/api/health`。）
+Day 17 加的：`GET /api/items`、`GET /api/reminders` 返回真数据 ✅
+Day 18 加的：`POST /api/items` 能真写入、能读回、重复提交被拒 ✅
+
+云函数 Base URL（Day 15 开通后拿到，Day 16 起实测可用）：
+
+```
+https://habit-checkin-d9giln6ke6594e88b-1499597872.ap-shanghai.app.tcloudbase.com/api
+```
 
 ---
 
