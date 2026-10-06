@@ -105,6 +105,13 @@ function repeat(ch, n) {
 }
 
 var ENV_HOST = 'habit-checkin-d9giln6ke6594e88b.api.tcloudbasegateway.com';
+
+// ⚠️ 必须在 require 之前设。
+// 白名单是模块加载时读一次 process.env 存进变量的（云函数里环境变量不会中途变，
+// 本地测试要模拟「不同环境配不同白名单」就只能靠重新 require），
+// 放到后面设的话，require 时读到的还是空 —— 下面 CORS 那组用例会全红。
+process.env.ALLOWED_ORIGINS = 'https://daily-checkin-list.app.workbuddy.host,http://localhost:8000';
+
 var items = require(path.join(__dirname, 'items', 'index.js'));
 var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
 
@@ -163,8 +170,11 @@ var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
   check('带上了 Bearer 鉴权头', captured.headers.Authorization === 'Bearer test-key', JSON.stringify(captured.headers));
   // 部署探针：版本号故意跟着 Day 走。改版本时这行会红 —— 那是提醒你
   // 「线上跑的还是旧代码」，不是代码坏了。
-  check('响应头带 X-Version 探针（day19）', r.headers['X-Version'] === 'day19', JSON.stringify(r.headers));
-  check('响应头允许跨域', r.headers['Access-Control-Allow-Origin'] === '*');
+  check('响应头带 X-Version 探针（day20）', r.headers['X-Version'] === 'day20', JSON.stringify(r.headers));
+  // Day 20 起 CORS 改白名单：没带 Origin（curl / 同源）时不该发这个头，
+  // 更不该退回通配符 '*'。下面几行才是真正的判据。
+  check('无 Origin 时不发 Allow-Origin（不回退通配符）', r.headers['Access-Control-Allow-Origin'] === undefined, JSON.stringify(r.headers));
+  check('声明了 Expose-Headers（前端才读得到 X-Version）', /X-Version/.test(r.headers['Access-Control-Expose-Headers'] || ''), JSON.stringify(r.headers));
   check('GET 请求不带 Prefer 头', captured.headers.Prefer === undefined, JSON.stringify(captured.headers));
 
   // ---- 5. 不传 limit 时用默认 100 ----
@@ -415,6 +425,67 @@ var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
   check('  └ 声明允许 POST', /POST/.test(r.headers['Access-Control-Allow-Methods'] || ''), JSON.stringify(r.headers));
   check('  └ 声明允许 Content-Type', /Content-Type/.test(r.headers['Access-Control-Allow-Headers'] || ''), JSON.stringify(r.headers));
   check('  └ 预检不打数据库', captured === null, 'captured=' + JSON.stringify(captured));
+
+  // ---- Day 20 新增：CORS 白名单（这是今天最容易出安全事故的地方）----
+  // 判据分三档：白名单内→回显该域名；白名单外→**连头都不发**；没带 Origin→不发。
+  // 中间那档是关键：绝不能「不在白名单就退回 *」，那等于白名单形同虚设。
+  console.log('\n=== CORS 白名单（Day 20） ===');
+
+  var ORIGIN_OK = 'https://daily-checkin-list.app.workbuddy.host';
+  var ORIGIN_LOCAL = 'http://localhost:8000';
+  var ORIGIN_EVIL = 'https://evil.example.com';
+
+  r = await items.main({ httpMethod: 'GET', headers: { origin: ORIGIN_OK } });
+  check('白名单内的 Origin → 回显该域名', r.headers['Access-Control-Allow-Origin'] === ORIGIN_OK, JSON.stringify(r.headers));
+
+  r = await items.main({ httpMethod: 'GET', headers: { origin: ORIGIN_LOCAL } });
+  check('白名单第二条（本地）也认', r.headers['Access-Control-Allow-Origin'] === ORIGIN_LOCAL, JSON.stringify(r.headers));
+
+  r = await items.main({ httpMethod: 'GET', headers: { origin: ORIGIN_EVIL } });
+  check('白名单外的 Origin → 完全不发这个头', r.headers['Access-Control-Allow-Origin'] === undefined, JSON.stringify(r.headers));
+  check('  └ 也不退回通配符', r.headers['Access-Control-Allow-Origin'] !== '*', JSON.stringify(r.headers));
+
+  r = await items.main({ httpMethod: 'GET', headers: { origin: ORIGIN_OK } });
+  check('命中时带 Vary: Origin（别让 CDN 把 A 的响应喂给 B）', /Origin/.test(r.headers['Vary'] || ''), JSON.stringify(r.headers));
+
+  r = await items.main({ httpMethod: 'GET' });
+  check('没带 Origin（curl / 同源）→ 不发这个头', r.headers['Access-Control-Allow-Origin'] === undefined, JSON.stringify(r.headers));
+
+  r = await items.main({ httpMethod: 'OPTIONS', headers: { origin: ORIGIN_EVIL } });
+  check('白名单外的 OPTIONS 预检也不发', r.headers['Access-Control-Allow-Origin'] === undefined, JSON.stringify(r.headers));
+
+  r = await items.main({ httpMethod: 'OPTIONS', headers: { origin: ORIGIN_OK } });
+  check('白名单内的 OPTIONS 预检 → 204 + 回显域名', r.statusCode === 204 && r.headers['Access-Control-Allow-Origin'] === ORIGIN_OK, String(r.statusCode));
+
+  // Origin 大小写/末尾斜杠都不该被放行 —— 精确匹配，不做「善意清洗」
+  r = await items.main({ httpMethod: 'GET', headers: { origin: ORIGIN_OK + '/' } });
+  check('多一个斜杠就不认（精确匹配）', r.headers['Access-Control-Allow-Origin'] === undefined, JSON.stringify(r.headers));
+
+  // reminders 侧同一套逻辑，不能只改一个函数
+  r = await reminders.main({ httpMethod: 'GET', headers: { origin: ORIGIN_OK } });
+  check('reminders 同样认白名单', r.headers['Access-Control-Allow-Origin'] === ORIGIN_OK, JSON.stringify(r.headers));
+  r = await reminders.main({ httpMethod: 'GET', headers: { origin: ORIGIN_EVIL } });
+  check('reminders 同样拒绝陌生域名', r.headers['Access-Control-Allow-Origin'] === undefined, JSON.stringify(r.headers));
+
+  // ⚠️ 漏配环境变量的后果：不是退回通配符，而是全部跨域请求被浏览器拒掉。
+  //   这个行为是故意的（显性失败好过静默降级），所以把它钉成用例。
+  //   注意重新 require 会拿到一个全新模块实例，它会**重新读一遍** process.env ——
+  //   所以 CLOUDBASE_APIKEY 也得重新给上，否则测到的是 500 而不是 CORS 行为。
+  process.env.CLOUDBASE_APIKEY = 'test-key';
+  delete process.env.ALLOWED_ORIGINS;
+  delete require.cache[require.resolve(path.join(__dirname, 'items', 'index.js'))];
+  var itemsNoWhitelist = require(path.join(__dirname, 'items', 'index.js'));
+  // 上面几行断言里 fakeBody 还停在别处设的值（这条路径最后设的是空串=「回读不到」），
+  // 不复位的话这组测的是假响应不是 CORS 行为 —— 之前就栽过一次这种「桩按错误假设写，
+  // 测试给错误代码盖章」的坑。
+  fakeStatus = 200;
+  fakeBody = JSON.stringify([{ id: 'seed-item-01', title: '读一章书', plan_date: '2026-10-02', done: 0, created_at: '2026-10-02T01:00:00.000Z', done_at: null }]);
+  r = await itemsNoWhitelist.main({ httpMethod: 'GET', headers: { origin: ORIGIN_OK } });
+  check('漏配 ALLOWED_ORIGINS → 跨域全被拒（不是退回 *）', r.headers['Access-Control-Allow-Origin'] === undefined, JSON.stringify(r.headers));
+  check('  └ 漏配时数据本身照常返回（同源 / curl 不受影响）', r.statusCode === 200, String(r.statusCode));
+  check('  └ 而且数据真的回来了（不是空数组蒙对）', (body(r).data || []).length === 1, r.body);
+  // 复原，免得影响后面用例
+  process.env.ALLOWED_ORIGINS = 'https://daily-checkin-list.app.workbuddy.host,http://localhost:8000';
 
   console.log('\n=== /api/reminders（Day 17，今天不该动它） ===');
 

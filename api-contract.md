@@ -17,10 +17,76 @@ Day 15 产出。**这份文件定义「前端和后端之间怎么说话」**，
 | 云函数 Base URL | `https://<CloudBase 环境域名>/api`（开通后填，见下「待填」） |
 | 请求 / 响应格式 | `application/json; charset=utf-8` |
 | 时间格式 | ISO 8601，统一 UTC（`2026-10-02T06:50:00.000Z`）—— 别用本地时间字符串，跨时区会错 |
-| 跨域 CORS | ✅ Day 18 已配（`Access-Control-Allow-Origin: *` + `OPTIONS` 预检） |
+| 跨域 CORS | ✅ Day 20 已配（**域名白名单**，不再是 `*`，见下「跨域白名单」） |
 | 失败结构 | 一律 `{ ok: false, error: { code, message } }`，不用 HTTP 码猜原因 |
 
 **失败结构的理由**：HTTP 状态码只说「哪一类错」（4xx/5xx），说不清「具体哪一步错了」。
+
+## 跨域白名单（Day 20 起）
+
+Day 18 为了先跑通，用的是 `Access-Control-Allow-Origin: *`。Day 20 换成**域名白名单**。
+
+### 为什么换
+
+`*` 等于「任何网站都能读我的数据」。虽然是自用工具、库里没有敏感信息，
+但它同时也意味着：将来这个接口一旦被人拿去套在别的站点上，数据是不设防的。
+白名单是零成本的 —— 只是把「全都行」改成「只我这几个」。
+
+### 怎么配
+
+**服务端**（三个云函数各配一份，环境变量**不跨函数共享**）：
+
+```text
+变量名：ALLOWED_ORIGINS
+变量值：https://daily-checkin-list.app.workbuddy.host,http://localhost:8000
+```
+
+逗号分隔，**不要加空格以外的任何东西**。
+
+**响应头规则**：
+
+| 情况 | 发出什么 |
+| --- | --- |
+| `Origin` 命中白名单 | `Access-Control-Allow-Origin: <那个域名>` + `Vary: Origin` |
+| `Origin` 不在白名单 | **不发** 这个头（不是退回 `*`） |
+| 没有 `Origin`（curl / 同源） | 不发，正常返回数据 |
+
+### 三个容易踩的坑
+
+1. **`localhost` 和 `127.0.0.1` 是两个不同的源。**
+   白名单只写了 `http://localhost:8000`，那用 `http://127.0.0.1:8000` 打开就一定被拒。
+   两个都要写就两个都写。
+
+2. **精确匹配，不做「善意清洗」。**
+   尾斜杠、大小写、`https` vs `http` 都不会被自动纠正。
+   写 `https://x.com/` 而来的是 `https://x.com` —— 不匹配，不发头。
+   这是故意的：自动纠正会让「我以为配好了」和「实际生效」之间出现偏差。
+
+3. **自定义响应头浏览器读不到，必须显式暴露。**
+   `X-Version` / `X-Service` / `Date` 这些，浏览器 JS 默认读不到，要服务端声明：
+
+   ```text
+   Access-Control-Expose-Headers: X-Version, X-Service, Date
+   ```
+
+   没这一行，检查台上的「最后更新时间」和「版本」就永远是空的。
+
+### 漏配会怎样
+
+`ALLOWED_ORIGINS` 没配或拼错时，**跨域请求全被拒，但 `curl` 直接调依然正常返回数据**。
+这个现象很容易被误判成「数据库挂了」—— 实际上数据好得很，只是浏览器不让读。
+
+### 取证手法
+
+```bash
+# 合法 Origin：应看到 access-control-allow-origin
+curl -s -D - -o /dev/null -H "Origin: https://daily-checkin-list.app.workbuddy.host" \
+  "$API/items" | grep -i "access-control"
+
+# 陌生 Origin：应看不到那一行
+curl -s -D - -o /dev/null -H "Origin: https://evil.example.com" \
+  "$API/items" | grep -i "access-control-allow-origin"
+```
 把业务错误码放进 body，前端才能给出人话提示（「这条已经删过了」而不是「请求失败」）。
 
 ---
@@ -433,6 +499,40 @@ PostgreSQL 写 `ON CONFLICT DO NOTHING`，SQLite 写 `INSERT OR IGNORE` ——
 | `?state=error` | 取数据失败的样子 |
 
 将来接真实 API 时**只改 `fetchState()` 内部那一小块**，页面与渲染不用动 —— 这是当初把数据层抽出来的目的。
+**Day 20 已接完**：`fetchState()` 现在 `fetch(API_BASE + path)`，
+`items` / `reminders` 并发拉，失败降级回localStorage（降级原因记在 `_remote`，检查台会显示）。
+`courses` / `anniv` 仍留在本地。四个演示态开关优先级高于真接口，仍然可用。
+
+---
+
+## ⚠️ 已知缺口：勾选没写回数据库（Day 20 结束时遗留）
+
+**现象**：在A 手机勾一条，B 手机刷新后那条仍是未勾的。
+
+**这不是 bug，是还没接。** Day 20 只做了读和新建，没做改：
+- `items` 表有 `done` 字段，前端映射时**读**了它
+- 但用户点勾选时，前端只改localStorage，**没有发任何写请求**
+
+**要补什么**：
+
+| 接口 | 用途 | 优先级 |
+| --- | --- | --- |
+| `PATCH /api/items/:id` | 勾选 / 取消勾选（改 `done`，顺带写 `done_at`） | 高 —— 这是「打卡」动作本身 |
+| `DELETE /api/items/:id` | 删除条目（连带级联删它的提醒） | 高 —— 现在删了会「复活」 |
+| `DELETE /api/reminders/:id` | 删提醒 | 中 |
+
+**PostgREST 改单行的写法**（不选 upsert，跟 Day 18 一个理由：主键冲突会被当成功）：
+
+```text
+PATCH https://<envId>.api.tcloudbasegateway.com/v1/rdb/rest/items?id=eq.<itemId>
+Prefer: return=representation
+{ "done": 1, "done_at": "2026-10-06T09:00:00.000Z" }
+```
+
+⚠️ `done` 是 `SMALLINT` 0/1，**不是 boolean** —— 传 JSON 的 `true` 会报错。
+
+**不做会怎样**：功能上是「单机可勾、跨设备不同步」，且**删掉的条目刷新后会回来**
+（因为数据库里那行还在）。这两个都是 Day 21+ 必须先解决的。
 
 ---
 

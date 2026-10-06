@@ -37,6 +37,53 @@
 
 | Day 17 | **GET 读接口**：`GET /api/items` + `GET /api/reminders` 两个云函数（`cloudfunctions/items/`、`cloudfunctions/reminders/`），读 CloudBase PostgreSQL 真数据，套契约信封 `{ok:true,data:[...]}` 返回。关键决策：**不直连 PG 的 TCP 端口**（体验版两条直连路径都走不通），改走平台自带的 PostgREST 层 `https://<envId>.api.tcloudbasegateway.com/v1/rdb/rest/<table>` + 服务端 API Key（网关解成 `service_role`，绕过 RLS —— 本环境无用户体系、无 RLS 策略，转发调用方 token 会查到 0 行）。用内置 `https` 而非 `fetch`（运行时可能是 Node 16）。`data` **直接用数据库列名不做前端映射**，映射推到 Day 18。新增错误码 `CONFIG_MISSING` / `UPSTREAM`（排查动作不同，不合并进 `INTERNAL`）。本地 `cloudfunctions/test_logic.js` 打桩 https 实跑 **37/37 通过**（方法守卫、参数校验、查询串拼接、信封形状、上游错误处理）。部署步骤、凭据配置、排障表见 `cloudfunctions/README.md` |
 
+| Day 18 | **建表 + 写接口**：`db/schema.sql` 定稿两表字段与索引、`db/seed.sql` 种 6+6 行样例数据（**SQL 必须同时能跑 PostgreSQL / MySQL / SQLite** —— 类型只用 `VARCHAR(n)/SMALLINT/INT/TEXT`，幂等只能用 `DELETE...WHERE id LIKE 'seed-%'` + `INSERT`，**不能用 upsert**，三家方言不同；且**真实数据 id 绝不能用 `seed-` 前缀**，会被 seed 清掉）。新增 `POST /api/items`（`Prefer: return=representation`、主键冲突返回 409 `DUPLICATE`、不写 `resolution=merge-duplicates`）。控制台实跑 SQL 验证通过 |
+
+| Day 19 | **分层重构**：把数据库操作从接口层拆到 `itemsRepository.js` / `remindersRepository.js`，接口只留「接请求、调函数、返响应」。判据是**「换掉数据库，这段代码要不要改？」** —— 要改才算 repository（重复比跨函数 HTTP 耦合便宜）。契约一个字段没动。回归遇到两个假警报：① PostgREST 不带 `order` 时返回顺序不保证稳定，`seed-item-02/03` 换了位置就以为改了行为 → 改用**按主键排序后的集合指纹**；② 回归 POST 写入的行让基线变 12 行 → 比对前排除本次写入 id。本地测试 **222/222**，线上 10 项回归全过 |
+
+| Day 20 | **前端接公网接口**：`fetchState()` 从 localStorage 换成 `fetch(API_BASE + path)`，字段映射在前端做（`plan_date→date`、`remind_at→at`、`lead_minutes→lead`、`done` 的 `0/1`↔`boolean`，UTC→本地时间给 `datetime-local`）。**CORS 从 `*` 改成域名白名单**（`ALLOWED_ORIGINS` 环境变量，精确匹配、陌生 Origin 不发头而非退回 `*`、命中时加 `Vary: Origin`；补 `Access-Control-Expose-Headers` 否则浏览器读不到 `X-Version`/`Date`）。失败时**退回本地数据并在底部说明**，不白屏。新增**检查台**（抽屉式，不挡主界面）：链路健康 + 核心表真实数据与原始 JSON + 写入测试（id 带时间戳，可重复点）+ 「最后更新时间」取服务器 `Date` 响应头。本地 **237/237**、字段映射 **21/21**；线上公网首页已显示数据库真实数据 |
+
+## 数据从哪来（Day 20 起）
+
+**已经不在 localStorage 了。** 现在每次打开页面都去云端数据库读：
+
+```text
+页面 → fetch(https://habit-checkin-d9giln6ke6594e88b-….tcloudbase.com/api/items)
+     → HTTP 网关 → items 云函数 → PostgREST → PostgreSQL
+```
+
+页面底部会**明说数据来源**：
+
+| 底部提示 | 含义 |
+| --- | --- |
+| 数据来自云端数据库 | 全都读到了，正常 |
+| 部分退回本地（数据库没读到） | 有接口挂了，用的 localStorage 兜底 —— 去看检查台 |
+| 数据只存在这台设备的浏览器里 | 只有旧版页面才会出现 |
+
+**读不到就退回本地，不白屏。** 断网、云函数改坏了、白名单漏配域名，页面照样能用，
+只是数据来源提示会变。退回原因记在 `localStorage` 的 `_remote` 里，检查台会显示。
+
+### 检查台
+
+页面底部「检查台」按钮打开。三块内容：
+
+1. **链路健康** —— HTTP 状态、`service`、`X-Version`、服务器 `Date`
+2. **核心表真实数据** —— items / reminders 各多少行，可展开原始 JSON
+3. **写入测试** —— POST 一条到 items，**id 带时间戳所以可以反复点**
+
+⚠️ **写入测试会真的往数据库插数据**（`d20-probe-<时间戳>`）。
+现在还没有 `DELETE` 接口，删不掉，要清就在控制台跑：
+
+```sql
+DELETE FROM items WHERE id LIKE 'd20-probe-%';
+```
+
+### 演示态还在
+
+`?state=mock` / `?state=empty` / `?state=loading` / `?state=error` 都还能用，
+**优先级高于真接口** —— 演示和截图时用它们，不受数据库状态影响。
+`mock` / `empty` 不写盘，不动真实数据。
+
 ## 本地运行
 
 **必须起本地服务器，不要双击打开。** 两个原因：一是 `file://` 下不同浏览器对 localStorage 的处理不一致（数据可能存不住或跟 `http://` 下的不互通）；二是截图、验证都要求在 `localhost` 地址下看。
@@ -60,7 +107,7 @@ python -m http.server 8000
 
 ## 四种页面状态
 
-取数据这件事是**异步**的（`fetchState()`，模拟一次 600ms 的往返），所以页面有四种样子。
+取数据这件事是**异步**的（`fetchState()`，真接口有网络往返），所以页面有四种样子。
 正常访问按真实条件走；想固定看某一态，加 URL 参数：
 
 | 网址 | 看到什么 |
@@ -75,14 +122,27 @@ python -m http.server 8000
 **为什么要有这套开关**：四种状态里最容易漏的是「错误」—— 开发环境里它从来不出现，写完了也看不见。
 看不见的东西没人会主动验证它，所以给它留一个能被主动点开的入口。
 
-**第 3 周接真实 API 时改哪里**：只改 `fetchState()` 内部那一小块，页面与渲染部分不用动。
+Day 20 补了一条：真接口读失败时**自动退回本地数据**，所以「错误态」和「退回本地」
+是两件不同的事 —— 前者是 `?state=error` 强制触发的，后者是网络/后端出问题时的兜底。
+底部提示和检查台会区分。
 
 ## 预览
 
 网址：**https://daily-checkin-list.app.workbuddy.host/** —— 手机直接打开就能用。
 
-线上已更新到 Day 15+（2026-10-02）：今日清单能勾/能加/能删，逾期区、提醒、导出 `.ics` 都可用；三个视图可点标签切换、**也可左右滑动**；「提醒」页底部可录入倒数纪念日，加完主屏顶部显示「距 XX 还有 N 天」，**勾「每年重复」可记生日 / 周年**（自动滚到下一次，显示「第 N 个」）。手机浏览器菜单里可**「添加到主屏幕」**，加完是真桌面图标、无地址栏运行。
+线上已更新到 **Day 20**（2026-10-06）：首页显示的是**云端数据库里的真实数据**，
+底部写「数据来自云端数据库」；底部「检查台」可看链路健康、真实数据与写入测试。
 （发布不自动同步 —— 本地改完功能要重新发布一次，线上才会更新。）
+
+Day 15+ 那时的能力也都还在：今日清单能勾/能加/能删，逾期区、提醒、导出 `.ics` 都可用；
+三个视图可点标签切换、**也可左右滑动**；「提醒」页底部可录入倒数纪念日，
+加完主屏顶部显示「距 XX 还有 N 天」，**勾「每年重复」可记生日 / 周年**。
+手机浏览器菜单里可**「添加到主屏幕」**。
+
+⚠️ **本地调试要用 `localhost`，别用 `127.0.0.1`。**
+这两个是不同的源，而跨域白名单只配了 `http://localhost:8000`。
+用 `127.0.0.1` 打开会读不到云端数据（页面会退回本地并给出提示）。
+要两个都能用就把 `http://127.0.0.1:8000` 也加进三个云函数的 `ALLOWED_ORIGINS`。
 
 **为什么不是 GitHub Pages**：`habit-checkin` 仓库属于组织 `XingHo-VibeCoding`，当前账号只有写权限、没有仓库管理权，开不了 Pages。所以先用 WorkBuddy 的发布通道拿到一个手机能访问的网址；等拿到组织权限或迁到个人账号再换。
 
@@ -96,3 +156,7 @@ python -m http.server 8000
 `cp index.html manifest.json .deploy/ && cp assets/*.png .deploy/assets/` —— `assets/` 里现在还留着
 `mascot.png`（旧看板娘素材，已无引用，拷过去不影响），要不要删由 Henry 定。
 （Day 9 已删掉旧的 `mascot.jpg` —— 透明立绘存不了 jpg。**别再用「只拷 `*.jpg`」的老命令**。）
+
+⚠️ **发布目录 `.deploy/api/health.json` 是 Day 15 的静态假数据**（`version: day15-mock`）。
+Day 20 的前端不再引用它（健康检查改成打真接口），但文件还在。
+留着无害，别被它骗到 —— 判断线上版本请看检查台里的 `X-Version`，那个才是真的。

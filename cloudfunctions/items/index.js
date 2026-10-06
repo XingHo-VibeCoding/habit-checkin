@@ -20,9 +20,34 @@
 // ★ 唯一一处 require。数据访问层——只经它，不直接碰 https。
 var repo = require('./itemsRepository');
 
-var VERSION = 'day19';
+var VERSION = 'day20';
 var DEFAULT_LIMIT = 100;
 var MAX_LIMIT = 200;
+
+// ---------- CORS 白名单（Day 20）----------
+//
+// 为什么不用通配符 '*'：
+// '*' 的意思是「任何网站都能用我账号的权限调这个接口」。自己是单人自用，
+// 风险看起来小，但通配符一旦漏到别的站点，别人就能随便读写你的清单。
+// 所以改成白名单：只认 ALLOWED_ORIGINS 里列出来的域名。
+//
+// ⚠️ 关键设计：**读不到白名单时不发这个头，而不是退回 '*'。**
+// 「配置漏了」和「配置错了」要表现成同一种失败（浏览器报 CORS 错），
+// 这样漏配是显性的、静默降级是隐性的 —— 后者才危险。
+//
+// 同源请求和 curl 都不带 Origin 头，本来就不需要这个头，照常工作。
+var ALLOWED_ORIGINS = (function () {
+  var raw = process.env.ALLOWED_ORIGINS || '';
+  return raw.split(',').map(function (s) { return s.trim(); })
+            .filter(function (s) { return s !== ''; });
+})();
+
+// 返回该回的那个 Origin，或 null（本域请求 / 不在白名单里）
+function resolveOrigin(origin) {
+  if (!origin) return null;              // curl、同源 —— 不需要 CORS 头
+  if (ALLOWED_ORIGINS.indexOf(origin) !== -1) return origin;
+  return null;
+}
 
 // 字段长度上限。跟 db/schema.sql 里的 VARCHAR(n) 对齐 ——
 // 两边数字不一样的话，就会出现「校验过了但数据库截断」或「数据库报错但说不清」。
@@ -43,19 +68,28 @@ function fail(code, message) {
 
 // ② HTTP 访问服务的「集成响应」包装：自己给状态码和响应头。
 //    X-Version 是部署探针 —— 改完云函数没生效时，先看它变没变。
-function withHttp(statusCode, payload) {
+function withHttp(statusCode, payload, req) {
+  var headers = {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    // 告诉浏览器「这几个自定义头你随便读」—— 不加这行，fetch 读 X-Version 会得到 null。
+    'Access-Control-Expose-Headers': 'X-Version, X-Service, Date',
+    'Cache-Control': 'no-store',
+    'X-Service': 'habit-checkin',
+    'X-Version': VERSION
+  };
+  // 只在白名单命中时才发 —— 见上面 resolveOrigin 的注释
+  var origin = resolveOrigin(req && (req.headers || {})['origin']);
+  if (origin) {
+    headers['Access-Control-Allow-Origin'] = origin;
+    // 白名单是精确匹配，不带 Vary: Origin；命中与否两种响应都可能出现，
+    // 告诉 CDN 别缓存死。
+    headers['Vary'] = 'Origin';
+  }
   return {
     statusCode: statusCode,
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      // 预检响应要靠这两个头，POST 跨域才会被浏览器放行（Day 20 前端接入时用得上）。
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      'Cache-Control': 'no-store',
-      'X-Service': 'habit-checkin',
-      'X-Version': VERSION
-    },
+    headers: headers,
     body: JSON.stringify(payload)
   };
 }
@@ -247,13 +281,13 @@ async function handlePost(event, startedAt) {
   var parsed = parseBody(event);
   if (parsed.error) {
     log({ m: 'POST', st: 'bad_body', ms: Date.now() - startedAt });
-    return withHttp(400, fail('BAD_REQUEST', parsed.error));
+    return withHttp(400, fail('BAD_REQUEST', parsed.error), event);
   }
 
   var v = validateBody(parsed.value);
   if (v.error) {
     log({ m: 'POST', st: 'invalid', ms: Date.now() - startedAt });
-    return withHttp(400, fail('BAD_REQUEST', v.error));
+    return withHttp(400, fail('BAD_REQUEST', v.error), event);
   }
 
   var row = v.row;
@@ -265,7 +299,7 @@ async function handlePost(event, startedAt) {
   if (r.status === 409 || /23505|duplicate key/i.test(r.text)) {
     log({ m: 'POST', id: row.id, st: 'duplicate', ms: Date.now() - startedAt });
     return withHttp(409, fail('DUPLICATE',
-      '这个 id 已经在清单里了（重复提交）。id 是防重复提交的幂等键 —— 如果你确实想加两条不同的内容，请换一个 id。'));
+      '这个 id 已经在清单里了（重复提交）。id 是防重复提交的幂等键 —— 如果你确实想加两条不同的内容，请换一个 id。'), event);
   }
 
   // 字段没满足数据库约束（比如漏了 NOT NULL、CHECK 没过）。
@@ -273,12 +307,12 @@ async function handlePost(event, startedAt) {
   if (r.status === 400 || r.status === 422) {
     log({ m: 'POST', id: row.id, st: 'rejected', up: r.status, ms: Date.now() - startedAt });
     return withHttp(400, fail('BAD_REQUEST',
-      '数据库拒收了这一行（可能是字段对不上表结构）：' + r.text.slice(0, 300)));
+      '数据库拒收了这一行（可能是字段对不上表结构）：' + r.text.slice(0, 300)), event);
   }
 
   if (r.status < 200 || r.status >= 300) {
     log({ m: 'POST', id: row.id, st: 'upstream', up: r.status, ms: Date.now() - startedAt });
-    return withHttp(502, fail('UPSTREAM', 'PG REST 返回 ' + r.status + '：' + r.text.slice(0, 300)));
+    return withHttp(502, fail('UPSTREAM', 'PG REST 返回 ' + r.status + '：' + r.text.slice(0, 300)), event);
   }
 
   // 201/200 + return=representation → repository 已把回读的那一行解析好。
@@ -287,10 +321,10 @@ async function handlePost(event, startedAt) {
   // 至少形状对，而且日志里 st=inserted_noread 就是这个信号。
   if (!r.parsed) {
     log({ m: 'POST', id: row.id, st: 'inserted_noread', ms: Date.now() - startedAt });
-    return withHttp(201, ok(row));
+    return withHttp(201, ok(row), event);
   }
   log({ m: 'POST', id: row.id, st: 'inserted', ms: Date.now() - startedAt });
-  return withHttp(201, ok(r.parsed));
+  return withHttp(201, ok(r.parsed), event);
 }
 
 // ⑩ GET 分支。Day 17 的逻辑，一字未改。
@@ -302,11 +336,11 @@ async function handleGet(event, startedAt) {
   var date = (q.date == null) ? '' : String(q.date);
   var dateStr = String(date);
   if (date && !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return withHttp(400, fail('BAD_REQUEST', 'date 必须是 YYYY-MM-DD，收到 "' + date + '"'));
+    return withHttp(400, fail('BAD_REQUEST', 'date 必须是 YYYY-MM-DD，收到 "' + date + '"'), event);
   }
 
   var lim = toLimit(q.limit);
-  if (lim.error) return withHttp(400, fail('BAD_REQUEST', lim.error));
+  if (lim.error) return withHttp(400, fail('BAD_REQUEST', lim.error), event);
 
   // ★ 只调 repository —— 查询串怎么拼、凭据从哪来，它自己知道。
   var rows = await repo.list({ date: dateStr, limit: lim.value });
@@ -315,7 +349,7 @@ async function handleGet(event, startedAt) {
   // 直接返回数据库列名，不做前端字段映射。
   // 映射（items.date ↔ plan_date 等）是前端接入时的事，
   // 今天先保证「库里有什么，接口就吐什么」，避免两处同时改、出错时分不清哪边的锅。
-  return withHttp(200, ok(rows));
+  return withHttp(200, ok(rows), event);
 }
 
 // ⑪ 入口。
@@ -327,13 +361,13 @@ exports.main = async function (event) {
   // 不回应的话，真正的 POST 根本发不出去 —— 浏览器报的是 CORS 错，
   // 跟函数逻辑毫无关系，很容易查错方向。
   if (method === 'OPTIONS') {
-    return withHttp(204, ok(null));
+    return withHttp(204, ok(null), event);
   }
 
   // 方法守卫：只放行 GET 和 POST。契约要可预测，
   // 返回 200 或凭空支持 PUT 都会误导调用方。
   if (method !== 'GET' && method !== 'POST') {
-    return withHttp(405, fail('BAD_REQUEST', '这个接口只支持 GET 和 POST，收到 ' + method + '。'));
+    return withHttp(405, fail('BAD_REQUEST', '这个接口只支持 GET 和 POST，收到 ' + method + '。'), event);
   }
 
   try {
@@ -342,13 +376,13 @@ exports.main = async function (event) {
       var hint = repo.credentialHint();
       return withHttp(500, fail('CONFIG_MISSING',
         '云函数拿不到 API Key。请在函数配置里开启 API Key，或手动加环境变量 ' +
-        hint.vars.join(' / ') + '。当前可见的相关变量名：' + hint.visible));
+        hint.vars.join(' / ') + '。当前可见的相关变量名：' + hint.visible), event);
     }
 
     if (method === 'POST') return await handlePost(event, startedAt);
     return await handleGet(event, startedAt);
   } catch (e) {
     log({ m: method, st: 'error', ms: Date.now() - startedAt });
-    return withHttp(500, fail('UPSTREAM', String((e && e.message) || e)));
+    return withHttp(500, fail('UPSTREAM', String((e && e.message) || e)), event);
   }
 };

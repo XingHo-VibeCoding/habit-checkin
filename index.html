@@ -726,6 +726,53 @@
       .head, .tabs { animation: none; }
       .views { scroll-behavior: auto; }
     }
+
+    /* ---------- 检查台（Day 20）----------
+       配色沿用羊皮纸 + 旧金，跟主界面同一套。刻意做成底部抽屉而不是全屏弹窗：
+       个人自用的调试面板，要能一边看一边继续勾清单，不能把主界面挡住。 */
+    .diag {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+      max-height: 62vh; overflow: auto;
+      background: #efe6d0;
+      border-top: 2px solid var(--accent);
+      box-shadow: 0 -6px 22px rgba(42, 35, 32, .18);
+      padding: 12px 14px 14px;
+      font-size: 13px;
+    }
+    .diag[hidden] { display: none; }
+    .diag-hd {
+      display: flex; align-items: baseline; gap: 10px;
+      max-width: 720px; margin: 0 auto 10px;
+    }
+    .diag-hd b { font-size: 14px; }
+    .diag-hd #diagWhen {
+      flex: 1; font-family: Consolas, Menlo, monospace;
+      font-size: 11px; color: var(--muted, #8a7a63);
+    }
+    .diag-bd { max-width: 720px; margin: 0 auto; }
+    .diag-ft { max-width: 720px; margin: 10px auto 0; }
+    .diag-sec {
+      border-top: 1px dashed rgba(168, 128, 26, .5);
+      padding: 8px 0 4px; margin-top: 8px;
+    }
+    .diag-sec:first-child { border-top: 0; margin-top: 0; }
+    .diag-t { font-size: 11px; letter-spacing: 1px; color: var(--accent); margin-bottom: 5px; }
+    .diag-row {
+      display: flex; gap: 8px; align-items: baseline;
+      padding: 3px 0; line-height: 1.5;
+    }
+    .diag-row .k { flex: 0 0 86px; color: var(--muted, #8a7a63); font-size: 11.5px; }
+    .diag-row .v { flex: 1; font-family: Consolas, Menlo, monospace; font-size: 11.5px; word-break: break-all; }
+    .ok { color: #4a7a34; }
+    .bad { color: #a03428; font-weight: 700; }
+    .mut { color: var(--muted, #8a7a63); }
+    .diag pre {
+      margin: 4px 0 0; padding: 8px; max-height: 170px; overflow: auto;
+      background: #f7f0dd; border: 1px solid rgba(168, 128, 26, .35);
+      font-family: Consolas, Menlo, monospace; font-size: 11px; line-height: 1.5;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .diag pre.hide { display: none; }
   </style>
 </head>
 <body>
@@ -860,8 +907,23 @@
     <footer class="foot">
       <span id="tip">数据只存在这台设备的浏览器里</span>
       <button class="link" id="clearSeed" hidden>清空示例</button>
+      <button class="link" id="openDiag">检查台</button>
     </footer>
   </main>
+
+  <!-- Day 20：检查台。放在 .app 之外，和 undoBar 同理 ——
+       列表重绘不会把它一起刷掉。默认 hidden，出错时由 JS 弹出来。 -->
+  <section class="diag" id="diag" hidden aria-live="polite">
+    <div class="diag-hd">
+      <b>检查台</b>
+      <span id="diagWhen"></span>
+      <button class="link" id="diagClose">收起</button>
+    </div>
+    <div class="diag-bd" id="diagBody"></div>
+    <div class="diag-ft">
+      <button class="link" id="diagRefresh">重新检查</button>
+    </div>
+  </section>
 
   <!-- Day 11：删除后的退路。刻意放在 .app 之外，列表重绘不会把它一起刷掉 -->
   <div class="undo" id="undoBar" role="status" aria-live="polite" aria-hidden="true">
@@ -916,6 +978,224 @@
         localStorage.setItem(KEY, JSON.stringify(state));
       } catch (e) {
         document.getElementById('tip').textContent = '保存失败：浏览器存储不可用';
+      }
+    }
+
+    // ---------- 检查台（Day 20）----------
+    //
+    // 回答三个问题：
+    //   ① 链路通不通（health + X-Version 探针）
+    //   ② 核心表里真的有数据吗（items / reminders 各多少行，附原始 JSON）
+    //   ③ 写接口能用吗（一个 POST 按钮，id 带时间戳）
+    //外加「最后更新时间」—— 这里的时刻取**响应头 Date**，不是 new Date()。
+    // 区别很实在：new Date() 只能证明「我这台机器的钟是准的」，
+    // 而 Date 响应头能证明「我拿到的是服务器刚生成的响应」，顺带能发现 CDN 给了旧缓存。
+    var diagState = { when: null, health: null, items: null, reminders: null, lastErr: '' };
+
+    function diagTime(s) {
+      var d = new Date(s);
+      return isNaN(d.getTime()) ? String(s)
+        : pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    }
+
+    function diagRow(k, v, cls) {
+      return '<div class="diag-row"><span class="k">' + k +
+             '</span><span class="v ' + (cls || '') + '">' + v + '</span></div>';
+    }
+
+    function esc(s) {
+      return String(s).replace(/[<>&]/g, function (m) {
+        return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[m];
+      });
+    }
+
+    // 拉一个接口，连响应头一起拿。检查台不用 apiGet —— 它要看到原始响应，
+    // 而且失败时也要把拿到了什么显示出来（而不是抛一句「不可达」）。
+    function diagFetch(path) {
+      return fetch(API_BASE + path, { cache: 'no-store' }).then(function (r) {
+        var date = r.headers.get('Date');
+        return r.text().then(function (txt) {
+          var json = null;
+          try { json = JSON.parse(txt); } catch (e) { /* 不是 JSON，下面如实显示原文 */ }
+          return {
+            status: r.status,
+            version: r.headers.get('X-Version') || '（无）',
+            // Date 响应头没暴露给 JS 时（要靠 Expose-Headers）会拿到 null，
+            // 那就退回本地时间并说清楚—— 别假装拿到了服务器时间。
+            date: date,
+            dateOk: !!date,
+            json: json,
+            raw: txt.length > 1200 ? txt.slice(0, 1200) + '…（已截断）' : txt
+          };
+        });
+      }, function (e) {
+        return { status: 0, version: '（请求失败）', date: null, dateOk: false,
+                 json: null, raw: '网络层失败：' + (e && e.name) +
+                 '。若DevTools 里这条请求标红写着 CORS，就是跨域被拒 —— ' +
+                 '要确认 ALLOWED_ORIGINS 里有当前地址栏的域名。' };
+      });
+    }
+
+    function renderDiag() {
+      var s = diagState;
+      var h = '';
+
+      // ---- ① 健康 ----
+      var hk = s.health;
+      h += '<div class="diag-sec"><div class="diag-t">① 链路健康</div>';
+      if (!hk) {
+        h += diagRow('状态', '还没检查', 'mut');
+      } else {
+        h += diagRow('HTTP', hk.status === 200 ? '200 OK' : (hk.status || '0 没拿到响应'),
+                     hk.status === 200 ? 'ok' : 'bad');
+        h += diagRow('服务', hk.json && hk.json.data ? hk.json.data.service : '—');
+        h += diagRow('版本探针', hk.version, hk.version === 'day20' ? 'ok' : 'bad');
+        h += diagRow('最后更新', hk.dateOk ? (hk.date + '（服务器）') : '拿不到 Date 头，用的是本机时间',
+                     hk.dateOk ? '' : 'mut');
+      }
+      h += diagRow('API 地址', esc(API_BASE));
+      h += '</div>';
+
+      // ---- ② 核心表真实数据 ----
+      h += '<div class="diag-sec"><div class="diag-t">② 核心表真实数据</div>';
+      [['items', s.items, '清单'], ['reminders', s.reminders, '提醒']].forEach(function (t) {
+        var key = t[0], r = t[1];
+        if (!r) { h += diagRow(t[2], '还没检查', 'mut'); return; }
+        var rows = r.json && r.json.ok ? (r.json.data || []) : null;
+        if (rows) {
+          h += diagRow(t[2], 'HTTP ' + r.status + ' · ' + rows.length + ' 行 · ' + r.version,
+                       rows.length ? 'ok' : 'mut');
+          // 原始 JSON 默认折叠：要看的时候点一下，但证据一直在页面里
+          h += '<div class="diag-row"><span class="k"></span><button class="link" data-diag-json="' +
+               key + '">展开原始 JSON</button></div>';
+          h += '<pre class="hide" id="diagJson_' + key + '">' + esc(r.raw) + '</pre>';
+        } else {
+          h += diagRow(t[2], 'HTTP ' + r.status + ' · 没读到数据', 'bad');
+          h += '<pre>' + esc(r.raw) + '</pre>';
+        }
+      });
+      // 本地 vs 远端：说清楚页面现在显示的数据是哪来的
+      if (s.lastErr) {
+        h += '<div class="diag-row"><span class="k">降级原因</span><span class="v bad">' + esc(s.lastErr) + '</span></div>';
+      } else if (state && state._remote) {
+        h += diagRow('页面数据来源',
+          state._remote.items && state._remote.reminders ? '数据库（接口全通）'
+            : '部分数据库 + 部分本地兜底', 'mut');
+      }
+      h += '</div>';
+
+      // ---- ③ 写入测试 ----
+      h += '<div class="diag-sec"><div class="diag-t">③ 写入测试</div>';
+      h += '<div class="diag-row"><span class="k"></span>' +
+           '<button class="link" id="diagWrite">POST 一条测试数据到 items</button></div>';
+      h += diagRow('说明', 'id 带时间戳，随便点几次都成功；写进去的行会留在库里', 'mut');
+      h += '<pre class="hide" id="diagWriteOut">（还没点）</pre>';
+      h += '</div>';
+
+      document.getElementById('diagBody').innerHTML = h;
+
+      // 时间戳放在标题栏：这是「最后更新时间」的正题
+      var wh = hk && hk.dateOk ? hk.date : (s.when || new Date().toISOString());
+      document.getElementById('diagWhen').textContent =
+        '最后更新 ' + diagTime(wh) + (hk && hk.dateOk ? '' : '（本机时钟，仅供参考）');
+    }
+
+    function openDiag() {
+      document.getElementById('diag').hidden = false;
+      refreshDiag();
+    }
+
+    function refreshDiag() {
+      diagState.health = diagState.items = diagState.reminders = null;
+      diagState.lastErr = '';
+      renderDiag();
+      // 三个并发，别串行
+      Promise.all([diagFetch('/health'), diagFetch('/items'), diagFetch('/reminders')])
+        .then(function (r) {
+          diagState.health = r[0];
+          diagState.items = r[1];
+          diagState.reminders = r[2];
+          var now = new Date().toISOString();
+          if (r[0].dateOk) diagState.when = r[0].date;
+          else if (r[1].dateOk) diagState.when = r[1].date;
+          else diagState.when = now;
+          // 页面当前是不是在用兜底数据 —— 有就说明至少一个接口挂了，提示得具体点
+          if (state && state._remote && !(state._remote.items && state._remote.reminders)) {
+            diagState.lastErr = (state._remote.itemsErr || '') + (state._remote.remindersErr || '');
+          }
+          renderDiag();
+        });
+    }
+
+    // 写入测试。
+    //⚠️ id 必须带时间戳：写死一个的话，第一次点成功、第二次必然 409（主键冲突），
+    //   看起来像功能坏了。2026-10-06 做过一次这种工具，被这个坑过一次。
+    function diagWrite() {
+      var id = 'd20-probe-' + Date.now().toString(36);
+      var payload = {
+        id: id,
+        title: '检查台写入测试 ' + diagTime(new Date()),
+        plan_date: todayStr(),
+        done: 0,
+        created_at: new Date().toISOString(),
+        done_at: null
+      };
+      var out = document.getElementById('diagWriteOut');
+      out.classList.remove('hide');
+      out.textContent = 'POST /api/items … id = ' + id;
+      fetch(API_BASE + '/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(function (r) {
+        return r.text().then(function (t) { return { status: r.status, txt: t }; });
+      }).then(function (res) {
+        out.textContent = 'HTTP ' + res.status + '\n' + res.txt +
+          '\n\n这行已经真进库了（items 表）。\n' +
+          '想删掉：控制台 SQL 编辑器执行\n' +
+          "  DELETE FROM items WHERE id = '" + id + "';";
+        // 写完就刷新一次列表，让②里的行数跟着变 —— 让人看到「操作真的落库了」
+        diagFetch('/items').then(function (r2) { diagState.items = r2; renderDiag(); });
+      }, function (e) {
+        out.textContent = '请求失败（' + (e && e.name) + '）。' +
+          '若 DevTools 里标红写着 CORS，是 ALLOWED_ORIGINS 没配当前域名。';
+      });
+    }
+
+    // 事件绑定放在 initRemFold 附近，避免和别的绑定混在一起
+    document.getElementById('openDiag').addEventListener('click', openDiag);
+    document.getElementById('diagClose').addEventListener('click', function () {
+      document.getElementById('diag').hidden = true;
+    });
+    document.getElementById('diagRefresh').addEventListener('click', refreshDiag);
+    // 事件委托：② 里的「展开 JSON」按钮是 innerHTML 生成的，绑不上
+    document.getElementById('diag').addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-diag-json]');
+      if (b) {
+        var pre = document.getElementById('diagJson_' + b.getAttribute('data-diag-json'));
+        if (pre) {
+          pre.classList.toggle('hide');
+          b.textContent = pre.classList.contains('hide') ? '展开原始 JSON' : '收起 JSON';
+        }
+        return;
+      }
+      if (ev.target.id === 'diagWrite') diagWrite();
+    });
+
+    // 底部提示。接了真接口后这句话要变：数据在云端数据库里，不在浏览器里。
+    // 说法要跟着实际数据来源走 —— 降级时如果还说「存在数据库」，那就是骗人。
+    function renderTip() {
+      var el = document.getElementById('tip');
+      var r = state && state._remote;
+      if (r && r.items) {
+        el.textContent = '数据来自云端数据库';
+        el.className = '';
+      } else if (r) {
+        el.textContent = '部分退回本地（数据库没读到）';
+        el.className = 'bad';
+      } else {
+        el.textContent = '数据只存在这台设备的浏览器里';
+        el.className = '';
       }
     }
 
@@ -985,6 +1265,83 @@
     // 取数据 —— 异步、且可能失败。
     // 这一层存在的意义：让「加载中」和「错误」两种状态在技术上成立。
     // 同步读 localStorage 的版本无处安放这两种状态，因为它不会慢、也不会报错。
+    // ---------- 公网接口（Day 20 接后端）----------
+    //
+    // API 地址刻意放在这里而不是散落各处：换环境只改这一行。
+    // 它不是密钥 —— 真正的服务端 API Key 只在云函数里读，从不出现在前端代码里。
+    // 想临时切回本地数据看mock？加?state=mock 即可，那几个开关比这个优先。
+    var API_BASE = 'https://habit-checkin-d9giln6ke6594e88b-1499597872.ap-shanghai.app.tcloudbase.com/api';
+
+    // 数据库列名 → 前端字段名。照 api-contract.md「前端字段映射」一节抄，不靠记忆。
+    //
+    // 为什么映射放在前端而不是接口里：两端同时改的话，字段名对不上就分不清
+    // 是接口错了还是前端错了。契约里写明了接口一律吐数据库列名。
+    function mapItem(r) {
+      return {
+        id: r.id,
+        title: r.title,
+        date: r.plan_date,              // ← plan_date
+        // 数据库里 done 是 SMALLINT（0/1），前端一直用布尔。0 也是 false，
+        // 直接透传的话「未完成」会被当成真值 —— 勾选框自己就亮了。
+        done: r.done === 1 || r.done === true,
+        createdAt: r.created_at || null, // ← created_at
+        doneAt: r.done_at || null        // ← done_at
+      };
+    }
+
+    function mapReminder(r) {
+      return {
+        id: r.id,
+        itemId: r.item_id == null ? null : r.item_id,
+        title: r.title,
+        // ⚠️ remind_at 在库里是 ISO 8601 UTC（'2026-10-05T01:00:00.000Z'），
+        //   前端 at 是**本地时间串**（'2026-10-05T09:00'），要转。
+        //   直接塞 ISO 串会显示成 UTC 时间，比本地时间早 8 小时 —— 就是"提醒晚 8 小时响"。
+        at: isoToLocalInput(r.remind_at),
+        lead: r.lead_minutes == null ? 0 : Number(r.lead_minutes),
+        done: r.done === 1 || r.done === true
+      };
+    }
+
+    // ISO(UTC) → 'YYYY-MM-DDTHH:mm'（本地时区）。前端 <input type="datetime-local"> 用这个格式。
+    function isoToLocalInput(iso) {
+      if (!iso) return '';
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+             'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    // 拉一个接口，把契约信封拆开。契约见 api-contract.md：成功 {ok:true,data}，失败 {ok:false,error}。
+    //
+    // ⚠️ 这里区分两种失败，因为它们要修的地方完全不同：
+    //   · 拿到 JSON 但 ok:false → 服务端的问题，看 error.code（CONFIG_MISSING / UPSTREAM…）
+    //   · fetch 本身reject    → 一个字响应都没拿到，**八成是跨域被浏览器拦了**
+    //     这两种在 DevTools 里长得完全不一样（一个是 200 + 业务错，一个是红色 CORS 报错），
+    //     但 reject 之后只剩一个 TypeError，字面看不出是哪一种。所以这里给个能指路的提示。
+    function apiGet(path) {
+      return fetch(API_BASE + path, { cache: 'no-store' }).then(function (r) {
+        return r.json().catch(function () {
+          throw new Error('接口返回的不是 JSON（HTTP ' + r.status + '）—— 不是 JSON 说明请求被网关或代理拦了，不在函数这一层');
+        }).then(function (body) {
+          if (!body || body.ok !== true) {
+            var msg = (body && body.error && body.error.message) || ('HTTP ' + r.status);
+            var code = (body && body.error && body.error.code) || 'UNKNOWN';
+            throw new Error(code + '：' + msg);
+          }
+          return body.data;
+        });
+      }, function (networkErr) {
+        // fetch reject = 没拿到任何响应。绝大多数情况是跨域：白名单里没有当前页面的域名。
+        throw new Error(
+          '拿不到任何响应（' + (networkErr && networkErr.name) + '）。' +
+          '如果 DevTools 里那条请求标红写着 CORS，那就是跨域被拒了 —— ' +
+          '要让云函数 ALLOWED_ORIGINS 包含当前地址栏的域名' +
+          '（注意 localhost 和 127.0.0.1 是两个不同的源）。'
+        );
+      });
+    }
+
     function fetchState() {
       return new Promise(function (resolve, reject) {
         setTimeout(function () {
@@ -1000,11 +1357,53 @@
               return;
             }
             if (!storageOk()) throw new Error('浏览器不允许读写本地存储（可能开着无痕模式）');
-            resolve(load() || mockState());
+
+            // 真接口。两个并发拉 —— 串行的话要多等一个 RTT，没必要。
+            //
+            // 降级策略：**任何一个挂了都退回 localStorage，而不是让页面空白。**
+            // 个人自用工具，宁可显示上一次的数据（可能过期），
+            // 也不要打开就是一句「加载失败」—— 那比旧数据更让人烦躁。
+            // 但 courses / anniv 永远给空数组：后端还没有这两张表，
+            // 用 localStorage 里的老值反而会让人以为它们还活着。
+            //
+            // 失败原因要留着：万一是跨域，页面上得能说出「是 ALLOWED_ORIGINS 没配这个域名」，
+            // 而不是让人对着一个「接口不可达」去查数据库。
+            var itemsErr = '', remindersErr = '';
+            Promise.all([
+              apiGet('/items').catch(function (e) { itemsErr = e.message; return null; }),
+              apiGet('/reminders').catch(function (e) { remindersErr = e.message; return null; })
+            ]).then(function (res) {
+              var items = res[0], reminders = res[1];
+              if (items === null && reminders === null) {
+                // 两个接口都挂→ 大概率是断网、环境不可用，或者跨域被拒。
+                // 把两个接口各自的失败原因都带上，别只说一句「不可达」——
+                // 跨域失败时 fetch 一个字响应都拿不到，笼统报错会让人往数据库方向查，
+                // 而实际要改的是 ALLOWED_ORIGINS。2026-10-06 就为这个多花了半小时。
+                var why = [itemsErr, remindersErr].filter(Boolean).join(' ｜ ');
+                reject(new Error('公网接口没读到数据' + (why ? '：' + why : '')));
+                return;
+              }
+              var local = load();
+              resolve({
+                items: items === null ? ((local && local.items) || []) : items.map(mapItem),
+                reminders: reminders === null ? ((local && local.reminders) || []) : reminders.map(mapReminder),
+                courses: (local && local.courses) || [],
+                anniv: (local && local.anniv) || [],
+                seeded: true,
+                // 供检查台显示用，不参与渲染
+                _remote: {
+                  items: items !== null,
+                  reminders: reminders !== null,
+                  itemsErr: itemsErr || '',
+                  remindersErr: remindersErr || ''
+                }
+              });
+            }).catch(reject);
+
           } catch (e) {
             reject(e);
           }
-        }, 600);   // 模拟一次网络往返；接真 API 后这里换成 fetch
+        }, 600);   // 演示态的模拟延迟；走真接口时这段白等，但换来的好处是演示态和真实态节奏一致
       });
     }
 
@@ -1171,6 +1570,7 @@
     function render() {
       var today = todayStr();
       var d = new Date();
+      renderTip();   // 数据来源提示要跟着这次渲染一起更新（新增/勾掉都会触发 render）
       document.getElementById('today').textContent =
         (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日';
       document.getElementById('week').textContent =

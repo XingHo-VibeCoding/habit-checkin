@@ -19,9 +19,28 @@
 // ★ 唯一一处 require。数据访问层——只经它，不直接碰 https。
 var repo = require('./remindersRepository');
 
-var VERSION = 'day19';
+var VERSION = 'day20';
 var DEFAULT_LIMIT = 100;
 var MAX_LIMIT = 200;
+
+// ---------- CORS 白名单（Day 20）----------
+// 与 items 函数里那份**完全相同**的逻辑，重复是有意的：
+// CloudBase 按函数独立打包，跨目录 require 在云端找不到文件，
+// 要共用只能走 HTTP 调另一个函数 —— 为一次请求往返不值得。重复比耦合便宜。
+//
+// ⚠️ 读不到白名单时**不发**这个头，而不是退回 '*'：
+// 漏配要表现成「浏览器报 CORS 错」（显性），不能静默开成通配符（隐性）。
+var ALLOWED_ORIGINS = (function () {
+  var raw = process.env.ALLOWED_ORIGINS || '';
+  return raw.split(',').map(function (s) { return s.trim(); })
+            .filter(function (s) { return s !== ''; });
+})();
+
+function resolveOrigin(origin) {
+  if (!origin) return null;              // curl、同源 —— 不需要 CORS 头
+  if (ALLOWED_ORIGINS.indexOf(origin) !== -1) return origin;
+  return null;
+}
 
 // ① 统一信封。形状由 api-contract.md 定死。
 function ok(data) {
@@ -32,18 +51,26 @@ function fail(code, message) {
 }
 
 // ② HTTP 访问服务的「集成响应」包装。
-function withHttp(statusCode, payload) {
+//    只在 Origin 命中白名单时才发 Access-Control-Allow-Origin。
+function withHttp(statusCode, payload, req) {
+  var headers = {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    // 不加这行，浏览器 fetch 读 X-Version 会得到 null（它只认「简单响应头」）
+    'Access-Control-Expose-Headers': 'X-Version, X-Service, Date',
+    'Cache-Control': 'no-store',
+    'X-Service': 'habit-checkin',
+    'X-Version': VERSION
+  };
+  var origin = resolveOrigin(req && (req.headers || {})['origin']);
+  if (origin) {
+    headers['Access-Control-Allow-Origin'] = origin;
+    headers['Vary'] = 'Origin';
+  }
   return {
     statusCode: statusCode,
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      'Cache-Control': 'no-store',
-      'X-Service': 'habit-checkin',
-      'X-Version': VERSION
-    },
+    headers: headers,
     body: JSON.stringify(payload)
   };
 }
@@ -81,8 +108,15 @@ function toLimit(raw) {
 // ⑤ 入口。
 exports.main = async function (event) {
   var method = (event && event.httpMethod) || 'GET';
+
+  // 浏览器跨域发请求前先发 OPTIONS 探路。不回应的话真正的请求根本发不出去，
+  // 而且浏览器报的是 CORS 错，跟这里面的逻辑毫无关系，很容易查错方向。
+  if (method === 'OPTIONS') {
+    return withHttp(204, ok(null), event);
+  }
+
   if (method !== 'GET') {
-    return withHttp(405, fail('BAD_REQUEST', '只用 GET，收到 ' + method));
+    return withHttp(405, fail('BAD_REQUEST', '只用 GET，收到 ' + method), event);
   }
 
   try {
@@ -91,7 +125,7 @@ exports.main = async function (event) {
       var hint = repo.credentialHint();
       return withHttp(500, fail('CONFIG_MISSING',
         '云函数拿不到 API Key。请在函数配置里开启 API Key，或手动加环境变量 ' +
-        hint.vars.join(' / ') + '。当前可见的相关变量名：' + hint.visible));
+        hint.vars.join(' / ') + '。当前可见的相关变量名：' + hint.visible), event);
     }
 
     var q = parseQuery(event);
@@ -101,16 +135,16 @@ exports.main = async function (event) {
     //    这是刻意的：前端要画的是「今天所有要响的提醒」，不该默认被过滤掉。
     var itemId = q.item_id == null ? '' : String(q.item_id);
     if (itemId && itemId.length > 64) {
-      return withHttp(400, fail('BAD_REQUEST', 'item_id 太长（>64），收到 ' + itemId.length + ' 个字符'));
+      return withHttp(400, fail('BAD_REQUEST', 'item_id 太长（>64），收到 ' + itemId.length + ' 个字符'), event);
     }
 
     var lim = toLimit(q.limit);
-    if (lim.error) return withHttp(400, fail('BAD_REQUEST', lim.error));
+    if (lim.error) return withHttp(400, fail('BAD_REQUEST', lim.error), event);
 
     // ★ 只调 repository —— 查询串怎么拼、凭据从哪来，它自己知道。
     var rows = await repo.list({ itemId: itemId, limit: lim.value });
-    return withHttp(200, ok(rows));
+    return withHttp(200, ok(rows), event);
   } catch (e) {
-    return withHttp(500, fail('UPSTREAM', String((e && e.message) || e)));
+    return withHttp(500, fail('UPSTREAM', String((e && e.message) || e)), event);
   }
 };
