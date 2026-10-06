@@ -231,8 +231,13 @@
          不影响布局 —— .undo 是 fixed 且在 .app 之外，不受这个包含块影响 */
       transform: translateZ(0);
       scroll-snap-align: start;
-      /* 不写 scroll-snap-stop: always —— 那会强制「一次滑动只准翻一页」，
-         快甩一下也只能走一格，手感上就是「慢」。让它按惯性自然走，反正 mandatory 会吸附到整页 */
+      /* 一次滑动只翻一页，不管甩多重（Day 20 修）。
+         scroll-snap-type: mandatory 只保证「停稳后吸附到整页」，**不限制滑多远** ——
+         不写下面这行的话，轻扫翻一页、用力甩翻两页，而且是从「已完成」直接飞到
+         「今日清单」（中间那页被跳过）。Henry 反馈「根据滑动幅度大小」就是这个。
+         代价是用力甩不再「顺滑地飞两页」，而是停在下一页 —— 对三页清单，
+         这个预期才是对的。之前 Day 14++ 为了「手感不慢」刻意没写这行，现在反转。 */
+      scroll-snap-stop: always;
     }
 
     /* 区块之间：一条细线就够，不做砖缝 */
@@ -1449,6 +1454,12 @@
       if (!(step > 0)) return false;        // 还没布局（加载态把 #views 藏了），这次不算
       geo.snaps = snaps;
       geo.step = step;
+      // 吸附点变了（转屏 / 缩放 / 软键盘），上一帧记的页号可能已经对不上。
+      // 拿新的 step 就地重算，让下一次 scroll 事件能正确判断「页号变没变」。
+      // 不写这行的症状：转屏后标签高亮要等滑一下才纠正。
+      if (typeof lastIdx === 'number') {
+        lastIdx = Math.round(viewsEl.scrollLeft / step);
+      }
       return true;
     }
 
