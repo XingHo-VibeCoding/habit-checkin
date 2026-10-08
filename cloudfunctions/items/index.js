@@ -1,6 +1,7 @@
 // CloudBase 云函数 /api/items（Day 19 重构：数据库代码已拆到 itemsRepository.js）
 // ---------------------------------------------------------------------------
-// 作用：读 items 表（GET）、新增一条（POST）。
+// 作用：读 items 表（GET）、新增一条（POST）、改一条（PATCH）、删一条（DELETE）。
+//                                     └── 以上四类 Day 22 补齐，CRUD 闭环完成
 //
 // 【这一层现在只管三件事】
 //   ① 接请求（解析 method / query / body）
@@ -14,13 +15,14 @@
 //   1. 云函数 → items → 更新代码 → **传 zip，不是粘贴代码**
 //      （Day 19 起有两个文件了：index.js + itemsRepository.js，一起打包）
 //   2. 函数配置 → 开启「API Key」（或手动加环境变量 CLOUDBASE_APIKEY）
-//   3. HTTP 访问服务 → /api/items 路由要同时勾 GET 和 POST
+//   3. HTTP 访问服务 → /api/items 路由要同时勾 GET / POST / PATCH / DELETE
+//Day 22：每天多勾一个方法，漏勾的表现是「代码上线了但方法不通」
 'use strict';
 
 // ★ 唯一一处 require。数据访问层——只经它，不直接碰 https。
 var repo = require('./itemsRepository');
 
-var VERSION = 'day20';
+var VERSION = 'day22';
 var DEFAULT_LIMIT = 100;
 var MAX_LIMIT = 200;
 
@@ -58,6 +60,16 @@ var MAX_TS = 32;
 // 允许写入的列。多一个字段都不认（理由见 validateBody）。
 var WRITABLE = ['id', 'title', 'plan_date', 'done', 'created_at', 'done_at'];
 
+// Day 22：PATCH 允许改的列。
+//
+// 【为什么 id 不在里面】—— id 是主键，是这行的身份。
+// 改 id 等于「把A 这条改成B 那条」—— 在有外键指向它的时候（reminders.item_id），
+// 这会留下指向不存在行的孤儿引用。所以 id 要改只能「删了重建」，不能改。
+//
+// 【为什么 created_at 也不在里面】—— 它是「这行什么时候被创建的」。
+// 改它会让记录失真（比如一条三天前建的任务突然显示成今天建的）。
+var PATCHABLE = ['title', 'plan_date', 'done', 'done_at'];
+
 // ① 统一信封。形状由 api-contract.md 定死，换后端实现也不许改。
 function ok(data) {
   return { ok: true, data: data };
@@ -71,7 +83,7 @@ function fail(code, message) {
 function withHttp(statusCode, payload, req) {
   var headers = {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     // 告诉浏览器「这几个自定义头你随便读」—— 不加这行，fetch 读 X-Version 会得到 null。
     'Access-Control-Expose-Headers': 'X-Version, X-Service, Date',
@@ -331,6 +343,15 @@ async function handlePost(event, startedAt) {
 async function handleGet(event, startedAt) {
   var q = parseQuery(event);
 
+  // Day 22：读路径里的 id，支持「查单条」。
+  //
+  // 之前这里完全不读 id，所以 GET /api/items/seed-item-01 会返回**全部 9 条** ——
+  // 传了 id 却当没传。发现它是因为 PATCH/DELETE 上线后需要「改完回读这一条」。
+  //
+  // ⚠️ 这跟路由没配有关，但**不是同一个问题**：就算网关把 id 传进来，
+  // 这里不读也还是返回全部。两个都得修，缺一个都走不通。
+  var id = pathId(event);
+
   // date 过滤（YYYY-MM-DD）。库里 plan_date 就是 CHAR(10)，格式对不上直接 400，
   // 别把非法值拼进 URL 让数据库去报语法错 —— 那样的错误信息前端没法看。
   var date = (q.date == null) ? '' : String(q.date);
@@ -343,8 +364,18 @@ async function handleGet(event, startedAt) {
   if (lim.error) return withHttp(400, fail('BAD_REQUEST', lim.error), event);
 
   // ★ 只调 repository —— 查询串怎么拼、凭据从哪来，它自己知道。
-  var rows = await repo.list({ date: dateStr, limit: lim.value });
+  var rows = await repo.list({ id: id, date: dateStr, limit: lim.value });
   log({ m: 'GET', st: 'ok', n: Array.isArray(rows) ? rows.length : -1, ms: Date.now() - startedAt });
+
+  // 按 id 查却没查到 → 404，不要返回空数组。
+  //
+  // 为什么：查单条时的语义是「我要这一条」，返回 [] 会让调用方以为
+  // 「拿到了，只是没有」—— 于是它可能接着当成「已删除」或「不存在」去处理，
+  // 而真相是 id 写错了。404 才说得出「你找的那条不存在」。
+  // （不带 id 时返回 [] 是正常的，那是「今天没有待办」，不是错误。）
+  if (id && (!Array.isArray(rows) || rows.length === 0)) {
+    return withHttp(404, fail('NOT_FOUND', '清单里没有 id 为 "' + id + '" 的这一条。'), event);
+  }
 
   // 直接返回数据库列名，不做前端字段映射。
   // 映射（items.date ↔ plan_date 等）是前端接入时的事，
@@ -352,7 +383,271 @@ async function handleGet(event, startedAt) {
   return withHttp(200, ok(rows), event);
 }
 
-// ⑪ 入口。
+// ⑪ Day 22：取出路径里的 id。
+//
+//     为什么用 pathParameters 而不是 query：
+//     契约写的是 `/api/items/:id`（RESTful 惯例），网关会把它放进 pathParameters。
+//     但 CloudBase 不同控制台版本给的字段不一样（有的给 rawPath），
+//     所以 query 里也认一下—— 同一个 id 从哪来都能跑，别赌一个。
+//
+//     ⚠️ 收窄字符集跟 POST 的 id 一样（字母数字 - _）。
+//     这个值会直接拼进 PostgREST 的 URL 查询串，放过 & ? / # 就是给自己造注入面。
+function pathId(event) {
+  var e = event || {};
+  var raw = '';
+  var pp = e.pathParameters || {};
+  if (pp && pp.id !== undefined && pp.id !== null) raw = String(pp.id);
+  if (!raw && e.path) {
+    // path 可能形如 /api/items/abc123，也可能是完整 URL
+    var m = String(e.path).match(/\/api\/items\/([^/?#]+)/);
+    if (m) raw = m[1];
+  }
+  if (!raw) {
+    var q = parseQuery(e);
+    if (q.id !== undefined && q.id !== null && String(q.id) !== '') raw = String(q.id);
+  }
+  return decodeURIComponent(raw);
+}
+
+// ⑫ Day 22：校验 PATCH 的 body，返回要改的列。
+//
+//     【与 POST 校验的三个区别，都是有原因的】
+//
+//     ① **id 不再必填。** POST 的 id 是幂等键（新建时必须给），
+//        PATCH 的 id 在 URL 上 —— body 里再带一份反而可能出现
+//        「URL 说改A、body 说改B」，那时该信哪个？一律只认 URL。
+//
+//     ② **没有任何一个字段是必填的。** `{}`（空对象）虽然合法但没意义，
+//        直接拒—— 静默成功的请求最难查。
+//
+//     ③ **字段间的矛盾检查要看「合并后」的状态，不能只看 body。**
+//        最典型的：把 done 改成 1 但不给 done_at，应该自动补上当前时间；
+//        而把 done 改成 0 却留着 done_at，就是矛盾。
+//        只看 body 会漏掉「body 里的 done_at 和库里的 done 打架」这种情况。
+function validatePatch(body) {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: '请求体必须是一个 JSON 对象，形如 {"done":1} 或 {"title":"新标题","plan_date":"2026-10-08"}。' };
+  }
+
+  var keys = Object.keys(body);
+  if (!keys.length) {
+    return { error: 'body 是空的 —— 没有任何要改的字段。PATCH 至少要改一样东西。' };
+  }
+
+  var extra = [];
+  for (var i = 0; i < keys.length; i++) {
+    if (PATCHABLE.indexOf(keys[i]) < 0) extra.push(keys[i]);
+  }
+  if (extra.length) {
+    return {
+      error: '这些字段不能改：' + extra.join('、') + '。' +
+             '可改的只有：' + PATCHABLE.join('、') + '。' +
+             '（id 是身份、created_at 是创建时间，都不该被改；想换 id 请删了重建）'
+    };
+  }
+
+  var patch = {};
+
+  if (body.title !== undefined) {
+    if (typeof body.title !== 'string') return { error: 'title 必须是字符串，收到 ' + typeof body.title + '。' };
+    var t = body.title.trim();
+    if (!t) return { error: 'title 不能是空字符串或只有空格（要改空，那就删掉这条）。' };
+    if (t.length > MAX_TITLE) {
+      return { error: 'title 太长了（' + t.length + ' 字），最多 ' + MAX_TITLE + ' 字 —— 手机上一行显示不完，请改短。' };
+    }
+    patch.title = t;
+  }
+
+  if (body.plan_date !== undefined) {
+    if (typeof body.plan_date !== 'string') return { error: 'plan_date 必须是字符串，收到 ' + typeof body.plan_date + '。' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(body.plan_date)) {
+      return { error: 'plan_date 必须是 YYYY-MM-DD，收到 "' + body.plan_date + '"。' };
+    }
+    if (!isRealDate(body.plan_date)) {
+      return { error: 'plan_date "' + body.plan_date + '" 不是个真实存在的日子（比如 2 月没有 31 号）。' };
+    }
+    patch.plan_date = body.plan_date;
+  }
+
+  if (body.done !== undefined) {
+    // done 在库里是 SMALLINT 0/1，**不是boolean**。
+    // 收 JSON 的 true 会被 PostgreSQL 拒（invalid input syntax for type smallint），
+    // 所以这里只认 0 和 1 —— 跟 POST 完全一致，不给「方便」开后门。
+    if (body.done !== 0 && body.done !== 1) {
+      return { error: 'done 只能是 0（没做）或 1（做完了），收到 ' + JSON.stringify(body.done) + '。' };
+    }
+    patch.done = body.done;
+  }
+
+  if (body.done_at !== undefined && body.done_at !== null) {
+    if (!isIsoString(body.done_at)) {
+      return { error: 'done_at 要么省略，要么是 null，要么是能解析的时间串，收到 ' + JSON.stringify(body.done_at) + '。' };
+    }
+    patch.done_at = body.done_at;
+  }
+
+  // 合并后的矛盾检查。理由见函数头③。
+  //注意：**done_at 显式给了就尊重它**（可能是在补录历史完成时间），
+  // 不强制改成「现在」。但 done=0 却带 done_at 必须拒。
+  var mergedDone = (patch.done !== undefined) ? patch.done : null;
+  if (mergedDone === 0 && patch.done_at !== undefined && patch.done_at !== null) {
+    return { error: 'done 是 0（还没做），却又给了 done_at —— 这两件事矛盾了。' };
+  }
+
+  return { patch: patch };
+}
+
+// ⑬ Day 22：PATCH 分支。
+//     流程：校验 body → 确认这行存在（404）→ 改 → 回读数据库真正那行。
+//
+//     【顺序为什么是「先查存在再改」】
+//     PostgREST 的 PATCH 在找不到行时返回 **204 No Content**（没有 body），
+//     和「成功改了，但改成的值恰好跟原来一样」的 200 分不开。
+//     不预查的话就只能靠 204 判「没找到」，判据含糊。
+//     预查一次多一个RTT，换来一个干净的 404，值得。
+async function handlePatch(event, startedAt) {
+  var id = pathId(event);
+  if (!id) {
+    return withHttp(400, fail('BAD_REQUEST',
+      'URL 里没有 id。改一条要写成 /api/items/<id>，例如 /api/items/' +
+      '（注意 CloudBase 网关的路由要配成 /api/items/{id} 或 /api/items/*，才能把 id 传进来）。'), event);
+  }
+  if (id.length > MAX_ID) return withHttp(400, fail('BAD_REQUEST', 'id 太长了（' + id.length + ' 字）。'), event);
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+    return withHttp(400, fail('BAD_REQUEST', 'id 只能含字母、数字、下划线和连字符，收到 "' + id + '"。'), event);
+  }
+
+  var parsed = parseBody(event);
+  if (parsed.error) {
+    log({ m: 'PATCH', id: id, st: 'bad_body', ms: Date.now() - startedAt });
+    return withHttp(400, fail('BAD_REQUEST', parsed.error), event);
+  }
+
+  var v = validatePatch(parsed.value);
+  if (v.error) {
+    log({ m: 'PATCH', id: id, st: 'invalid', ms: Date.now() - startedAt });
+    return withHttp(400, fail('BAD_REQUEST', v.error), event);
+  }
+
+  // 这行在不在
+  var found = await repo.exists(id);
+  if (!found) {
+    log({ m: 'PATCH', id: id, st: 'not_found', ms: Date.now() - startedAt });
+    return withHttp(404, fail('NOT_FOUND', '清单里没有 id 为 "' + id + '" 的这一条 —— 可能已经被删了。'), event);
+  }
+
+  // done: 0 → 1 且没给 done_at 时，自动补当前时间。
+  // 这是「打卡」动作的完整语义：勾上的那一刻就是完成的那一刻。
+  // 反过来（done: 1 → 0）要把 done_at 置 null，否则会留下
+  // 「未完成却有一个完成时间」的脏数据。
+  var patch = v.patch;
+  if (patch.done === 1 && patch.done_at === undefined) {
+    patch.done_at = new Date().toISOString();
+  }
+  if (patch.done === 0) {
+    patch.done_at = null;
+  }
+
+  var r = await repo.update(id, patch);
+
+  if (r.status === 404) {
+    log({ m: 'PATCH', id: id, st: 'gone', ms: Date.now() - startedAt });
+    return withHttp(404, fail('NOT_FOUND', '这一条在改动过程中被删掉了。'), event);
+  }
+  if (r.status < 200 || r.status >= 300) {
+    log({ m: 'PATCH', id: id, st: 'upstream', up: r.status, ms: Date.now() - startedAt });
+    return withHttp(502, fail('UPSTREAM', 'PG REST 返回 ' + r.status + '：' + r.text.slice(0, 300)), event);
+  }
+
+  if (!r.parsed) {
+    // PATCH 走到这里还没 body：多半是 Prefer 头被网关吃了。
+    // 不猜，直接报—— 报「不确定有没有改成」比报「改成了」诚实。
+    log({ m: 'PATCH', id: id, st: 'updated_noread', ms: Date.now() - startedAt });
+    return withHttp(200, ok({
+      id: id,
+      changed: patch,
+      reread: null,
+      note: '改动已发出，但没能回读数据库确认。请重新 GET 一次核对。'
+    }), event);
+  }
+
+  log({ m: 'PATCH', id: id, st: 'updated', f: Object.keys(patch).join('+'), ms: Date.now() - startedAt });
+  // 返回数据库里真正那行（不是我们发过去的 patch）——
+  // 这样前端拿到的 title/plan_date/done 一定跟库里一致。
+  return withHttp(200, ok(r.parsed), event);
+}
+
+// ⑭ Day 22：DELETE 分支。
+//
+//【今天最重要的一条：删除找不到行，必须报 404，不能报成功】
+//
+//     为什么？这是新增和删除**最不对称的地方**：
+//
+//       POST  重复发 → 撞主键 → 409。两发请求天然分开，不会静默。
+//       DELETE 重复发 → 第二次「成功地什么都没做」。
+//
+//     如果这里返回 200，调用方（前端、同伴、以后任何一个脚本）会以为
+//     「我删成功了」，而真实情况可能是第一���请求压根没生效 ——
+//     数据还在，但调用方以为已经清掉了。这种谎报比报错危险得多：
+//     报错会让人去查，谎报只会让人接着往下走。
+//
+//     → 所以：**0 行被删 = 404 NOT_FOUND。**
+//     要幂等重试的场景（比如「确保这条不在了」），让调用方显式带?force=1。
+async function handleDelete(event, startedAt) {
+  var id = pathId(event);
+  if (!id) {
+    return withHttp(400, fail('BAD_REQUEST',
+      'URL 里没有 id。删一条要写成 /api/items/<id>。'), event);
+  }
+  if (id.length > MAX_ID) return withHttp(400, fail('BAD_REQUEST', 'id 太长了（' + id.length + ' 字）。'), event);
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+    return withHttp(400, fail('BAD_REQUEST', 'id 只能含字母、数字、下划线和连字符，收到 "' + id + '"。'), event);
+  }
+
+  var q = parseQuery(event);
+  var force = q.force === '1' || q.force === 'true';
+
+  var found = await repo.exists(id);
+  if (!found && !force) {
+    log({ m: 'DELETE', id: id, st: 'not_found', ms: Date.now() - startedAt });
+    return withHttp(404, fail('NOT_FOUND',
+      '清单里没有 id 为 "' + id + '" 的这一条 —— 也许已经被删过了。' +
+      '如果你要的是「确保它不在」（幂等删除），加 ?force=1。'), event);
+  }
+
+  var r = await repo.remove(id);
+
+  if (r.status === 404) {
+    log({ m: 'DELETE', id: id, st: 'gone', ms: Date.now() - startedAt });
+    return withHttp(404, fail('NOT_FOUND', '这一条在删除过程中消失了。'), event);
+  }
+  if (r.status < 200 || r.status >= 300) {
+    log({ m: 'DELETE', id: id, st: 'upstream', up: r.status, ms: Date.now() - startedAt });
+    return withHttp(502, fail('UPSTREAM', 'PG REST 返回 ' + r.status + '：' + r.text.slice(0, 300)), event);
+  }
+
+  // PostgREST 带 return=representation 时 DELETE 也回读被删掉的那行。
+  // parsed === null 表示一行都没删到（不该发生，前面exists 已经挡过）。
+  var deleted = r.parsed;
+  log({
+    m: 'DELETE', id: id,
+    st: deleted ? 'deleted' : 'deleted_noread',
+    cascaded: '见响应里的 reminders_would_cascade',
+    ms: Date.now() - startedAt
+  });
+
+  return withHttp(200, ok({
+    deleted: !!deleted,
+    row: deleted,
+    // 把被删掉的那行原样还回去 —— 唯一的证据。
+    // 前端要用它做撤销条（「已删除「xxx」」+ 撤销），
+    // 没有回读的话前端只能靠自己那份内存，刷新就没了。
+    note: deleted ? '已删除。row 是从数据库回读的那一行，可用于撤销。'
+                  : '删除已执行，但没能回读确认（Prefer 头可能没生效）。'
+  }), event);
+}
+
+// ⑮ 入口。
 exports.main = async function (event) {
   var method = (event && event.httpMethod) || 'GET';
   var startedAt = Date.now();
@@ -364,10 +659,17 @@ exports.main = async function (event) {
     return withHttp(204, ok(null), event);
   }
 
-  // 方法守卫：只放行 GET 和 POST。契约要可预测，
+  // 方法守卫：只放行契约里有的四种。契约要可预测，
   // 返回 200 或凭空支持 PUT 都会误导调用方。
-  if (method !== 'GET' && method !== 'POST') {
-    return withHttp(405, fail('BAD_REQUEST', '这个接口只支持 GET 和 POST，收到 ' + method + '。'), event);
+  //
+  // 405 必须带 Allow 头（RFC 7231 要求）—— 不带的话有些客户端报的是
+  // 「方法不支持」而不是「405」，排查时容易以为是网关拦的。
+  var ALLOWED = ['GET', 'POST', 'PATCH', 'DELETE'];
+  if (ALLOWED.indexOf(method) < 0) {
+    var r405 = withHttp(405, fail('METHOD_NOT_ALLOWED',
+      '这个接口只支持 ' + ALLOWED.join(' / ') + '，收到 ' + method + '。'), event);
+    r405.headers.Allow = ALLOWED.join(', ');
+    return r405;
   }
 
   try {
@@ -380,6 +682,8 @@ exports.main = async function (event) {
     }
 
     if (method === 'POST') return await handlePost(event, startedAt);
+    if (method === 'PATCH') return await handlePatch(event, startedAt);
+    if (method === 'DELETE') return await handleDelete(event, startedAt);
     return await handleGet(event, startedAt);
   } catch (e) {
     log({ m: method, st: 'error', ms: Date.now() - startedAt });

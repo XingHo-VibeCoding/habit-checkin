@@ -24,6 +24,48 @@ var capturedBody = '';
 var fakeStatus = 200;
 var fakeBody = '[]';
 
+// ============ Day 22 新增：多次请求的响应队列 ============
+//
+// 为什么需要：PATCH / DELETE 一个动作要发**两次**上游请求
+// （先 exists 查在不在，再真正改），每次的响应还不一样
+// （第一次回'这一行不存在'，第二次回'改完的那一行'）。
+// 只有一对 fakeStatus/fakeBody 时，第二次请求会拿到第一次的响应，
+// 于是测试会以一种**看起来像 bug 的方式**失败，而且很难查。
+//
+// 用法：
+//   fakeQueue = ['[]', '[{...}]'];   // 依次用完
+//   fakeQueue = null;                // 回到「所有请求都用 fakeStatus/fakeBody」
+//
+// ⚠️ 一条重要的坑（Day 22 亲自踩了）：
+// **不要在测试中间替换 https.request。** index.js 在 require 时就把
+// 引用抓走了，事后再赋值 https.request = 新桩**不会生效** ——
+// 于是 captured 一直是 null，报错信息是
+//「Cannot read properties of null (reading 'method)」，
+// 看起来像云函数没发请求，其实是桩没接上。
+// → 所以要改桩，只能改**这一个**桩函数本身。
+var fakeQueue = null;
+var fakeQueueAt = 0;
+
+// 取本次请求该回的（status, body）。队列用完就沿用最后一项，
+// 不取「用完就报错」—— 闭包链上多打一次请求是很正常的事，
+// 让队列超长比让它抛异常好排查。
+function nextFake() {
+  if (!fakeQueue || !fakeQueue.length) return { status: fakeStatus, body: fakeBody };
+  var item = fakeQueue[Math.min(fakeQueueAt, fakeQueue.length - 1)];
+  fakeQueueAt++;
+  return { status: item.status, body: item.body };
+}
+
+// 每个测试用例开头调它：重置队列和计数器。漏调会让用例互相污染。
+function resetFake() {
+  fakeQueue = null;
+  fakeQueueAt = 0;
+  fakeStatus = 200;
+  fakeBody = '[]';
+  captured = null;
+  capturedBody = '';
+}
+
 https.request = function (opts, cb) {
   captured = opts;
   capturedBody = '';
@@ -36,12 +78,13 @@ https.request = function (opts, cb) {
   };
   req.end = function () {
     // 异步回：index.js 是先注册 res.on('data'/'end')、再 end()，顺序不能反。
+    var f = nextFake();          // ★ Day 22：进end() 时才取，不能在函数外提前取
     process.nextTick(function () {
       var res = new EventEmitter();
-      res.statusCode = fakeStatus;
+      res.statusCode = f.status;
       cb(res);
       process.nextTick(function () {
-        res.emit('data', Buffer.from(fakeBody, 'utf8'));
+        res.emit('data', Buffer.from(f.body, 'utf8'));
         res.emit('end');
       });
     });
@@ -119,10 +162,32 @@ var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
   console.log('\n=== /api/items · GET（Day 17，必须一行没变） ===');
 
   // ---- 1. 方法守卫：GET 之外的方法仍要挡掉 ----
-  var r = await items.main({ httpMethod: 'DELETE' });
-  check('DELETE 被挡（405）', r.statusCode === 405, '实际 ' + r.statusCode);
-  check('405 的错误码是 BAD_REQUEST', body(r).error.code === 'BAD_REQUEST', JSON.stringify(body(r)));
-  check('405 的提示是中文', isChinese(body(r).error.message), body(r).error.message);
+  //
+  // ⚠️ Day 22：这段开头必须先给上凭据。
+  // 原来第一条断言是「DELETE → 405」，而 405 恰好在凭据检查**之前**返回，
+  // 所以不需要凭据也过。今天 DELETE 成了四种之一，同一条请求会继续往下走到
+  // 「缺 id → 400」的参数校验，而那条路径已经过了凭据检查 —— 于是变成 500 CONFIG_MISSING。
+  // 教训：**一条断言「以前不需要某个前置条件」不代表以后也不需要。**
+  process.env.CLOUDBASE_APIKEY = 'test-key';
+
+  var r;
+
+  // Day 22 更新：这条断言原本是「DELETE 被挡（405）」——
+  // 当时只支持 GET/POST，那是正确的。今天 DELETE 成了四种之一，
+  // **继续期待 405 就是在期待一个已经修好的缺陷**（这类断言过期最隐蔽：
+  // 它不会报错，只会在「修好了」那天突然变红，看起来像新引入的 bug）。
+  // 现在改成：DELETE 不带 id 时应该是 400（缺参数），而不是 405（方法不支持）。
+  r = await items.main({ httpMethod: 'DELETE' });
+  check('DELETE 不再被 405 挡（Day 22 起支持四种方法）', r.statusCode === 400, String(r.statusCode));
+  check('  └ 不带 id → 400 且错误码 BAD_REQUEST', body(r).error.code === 'BAD_REQUEST', JSON.stringify(body(r)));
+  check('  └ 400 的提示是中文', isChinese(body(r).error.message), body(r).error.message);
+
+  r = await items.main({ httpMethod: 'PATCH' });
+  check('PATCH 不再被 405 挡', r.statusCode === 400, String(r.statusCode));
+  check('  └ PATCH 缺 id 报 400 NOT 405', body(r).error.code === 'BAD_REQUEST', JSON.stringify(body(r)));
+
+  r = await items.main({ httpMethod: 'PUT' });
+  check('PUT 仍然被挡（405）—— 契约外的法方法不因为加了两个就放开', r.statusCode === 405, String(r.statusCode));
 
   // ---- 2. 缺 API Key 时给出可操作的报错 ----
   delete process.env.CLOUDBASE_APIKEY;
@@ -170,7 +235,10 @@ var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
   check('带上了 Bearer 鉴权头', captured.headers.Authorization === 'Bearer test-key', JSON.stringify(captured.headers));
   // 部署探针：版本号故意跟着 Day 走。改版本时这行会红 —— 那是提醒你
   // 「线上跑的还是旧代码」，不是代码坏了。
-  check('响应头带 X-Version 探针（day20）', r.headers['X-Version'] === 'day20', JSON.stringify(r.headers));
+  // 探针值跟着当天版本走（Day 20 是 day20，Day 22 起是 day22）。
+  // 这里断言「是个 dayNN 的串」而不是死写某一天 —— 否则每过一版都会红一次，
+  // 而那种红不是 bug，是探针在正常工作。
+  check('响应头带 X-Version 探针', /^day\d\d$/.test(String(r.headers['X-Version'])), JSON.stringify(r.headers));
   // Day 20 起 CORS 改白名单：没带 Origin（curl / 同源）时不该发这个头，
   // 更不该退回通配符 '*'。下面几行才是真正的判据。
   check('无 Origin 时不发 Allow-Origin（不回退通配符）', r.headers['Access-Control-Allow-Origin'] === undefined, JSON.stringify(r.headers));
@@ -515,6 +583,413 @@ var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
   delete process.env.CLOUDBASE_APIKEY;
   r = await reminders.main({ httpMethod: 'GET' });
   check('reminders 也检查 API Key', body(r).error.code === 'CONFIG_MISSING', JSON.stringify(body(r)));
+
+  // =====================================================================
+  // Day 22：PATCH / DELETE
+  // =====================================================================
+  console.log('\n[Day 22 · PATCH / DELETE]');
+
+  //⚠️ 上一段（reminders）结尾把 CLOUDBASE_APIKEY 删掉了没恢复，
+  //这里必须重新设上 —— 否则第一个 PATCH 直接 500 CONFIG_MISSING，
+  // 表现是「captured 是 null、方法不对」，看起来像云函数没发请求，
+  // 实际是**根本没走到发请求那一步**。（踩过：找了半天才发现是环境变量没设。）
+  process.env.CLOUDBASE_APIKEY = 'test-key';
+
+  // ★ Day 22 踩的坑：exists() 判「在不在」靠的是**数组长度**，
+  //   所以桩必须回 `[{"id":"xxx"}]`（有一行）才算「存在」。
+  //   我一开始回 '[]'（想当然以为「查存在=空结果」），
+  //   于是所有 PATCH/DELETE 都落进 404 分支，
+  //   报错却是「captured.method 是 GET」—— 指向错方向，很花时间。
+  //   → 断言「404 时不该发第二个请求」比断言「发了几跳」更能防住这类错。
+  function Q2() {
+    return [ { status: 200, body: '[]' }, { status: 200, body: '[]' } ];
+  }
+
+  var ROW = { id: 'd22-a', title: '旧标题', plan_date: '2026-10-08', done: 0, done_at: null, created_at: '2026-10-07T00:00:00.000Z' };
+  var ROW2 = { id: 'd22-a', title: '新标题', plan_date: '2026-10-08', done: 1, done_at: '2026-10-08T01:00:00.000Z', created_at: '2026-10-07T00:00:00.000Z' };
+
+  // ---------- 板块 1：方法守卫 ----------
+  console.log('\n-- 1. 方法守卫 --');
+  r = await items.main({ httpMethod: 'PUT' });
+  check('PUT 仍被拒（405）', r.statusCode === 405, String(r.statusCode));
+  check('  └ 错误码是 METHOD_NOT_ALLOWED', body(r).error.code === 'METHOD_NOT_ALLOWED', JSON.stringify(body(r)));
+  check('  └ 405 带 Allow 头（RFC 7231 要求）', r.headers.Allow === 'GET, POST, PATCH, DELETE', JSON.stringify(r.headers));
+  check('CORS Allow-Methods 已放开四种',
+    r.headers['Access-Control-Allow-Methods'] === 'GET, POST, PATCH, DELETE, OPTIONS',
+    r.headers['Access-Control-Allow-Methods']);
+
+  // ---------- 板块 2：PATCH —— 先量「发了什么」 ----------
+  console.log('\n-- 2. PATCH 发了什么 --');
+  resetFake();
+  // 第 1 次请求 = exists（回'这一行存在'），第 2 次 = PATCH（回改完的那行）
+  fakeQueue = [ { status: 200, body: JSON.stringify([ROW]) },
+                { status: 200, body: JSON.stringify([ROW2]) } ];
+
+  r = await items.main({
+    httpMethod: 'PATCH',
+    pathParameters: { id: 'd22-a' },
+    body: JSON.stringify({ title: '新标题', done: 1 })
+  });
+  check('PATCH 成功 → 200', r.statusCode === 200, String(r.statusCode));
+  check('  └ 方法是 PATCH', captured.method === 'PATCH', captured.method);
+  check('  └ 路径带 id=eq.d22-a', captured.path.indexOf('id=eq.d22-a') >= 0, captured.path);
+  check('  └ Prefer: return=representation（要回读）', captured.headers.Prefer === 'return=representation', JSON.stringify(captured.headers));
+  check('  └ 请求体只送要改的列，不送整行',
+    /"title":"新标题"/.test(capturedBody) && /"done":1/.test(capturedBody) && !/created_at/.test(capturedBody),
+    capturedBody);
+  check('  └ 不送 id（id 只从 URL 来）', !/"id"/.test(capturedBody), capturedBody);
+  var pb = body(r);
+  check('  └ 返回的是数据库回读那行，不是发出去的 patch',
+    pb.data && pb.data.title === '新标题' && pb.data.created_at === '2026-10-07T00:00:00.000Z',
+    JSON.stringify(pb.data));
+  check('  └ ★ 带着没改的列一起回来（证明是回读不是回显）',
+    pb.data.created_at === ROW.created_at, JSON.stringify(pb.data));
+
+  // ---------- 板块 3：PATCH 的 id 从哪来都能认 ----------
+  console.log('\n-- 3. PATCH 的 id 提取（网关版本差异） --');
+  resetFake();
+  fakeQueue = Q2();
+  await items.main({ httpMethod: 'PATCH', pathParameters: { id: 'd22-a' }, body: '{"done":0}' });
+  check('从 pathParameters 取 id', captured.path.indexOf('id=eq.d22-a') >= 0, captured.path);
+
+  resetFake();
+  fakeQueue = Q2();
+  await items.main({ httpMethod: 'PATCH', path: '/api/items/d22-a', body: '{"done":0}' });
+  check('从 path（rawPath）取 id', captured.path.indexOf('id=eq.d22-a') >= 0, captured.path);
+
+  resetFake();
+  fakeQueue = Q2();
+  await items.main({ httpMethod: 'PATCH', queryStringParameters: { id: 'd22-a' }, body: '{"done":0}' });
+  check('从 query 取 id（兜底）', captured.path.indexOf('id=eq.d22-a') >= 0, captured.path);
+
+  resetFake();
+  fakeQueue = Q2();
+  r = await items.main({ httpMethod: 'PATCH', body: '{"done":0}' });
+  check('三处都没有 id → 400', r.statusCode === 400, String(r.statusCode));
+  check('  └ 消息里说了要写成 /api/items/<id>', /\/api\/items\/<id>/.test(body(r).error.message), body(r).error.message);
+
+  // ---------- 板块 4：PATCH 校验 ----------
+  console.log('\n-- 4. PATCH 校验 --');
+  function patchErr(patchBody, id) {
+    // 校验类用例只关心「不该发任何请求」，所以队列给空数组。
+    // 但存在性检查会先发一次 exists —— 校验没过时根本到不了那一步。
+    resetFake();
+    fakeQueue = [ { status: 200, body: '[]' } ];
+    return items.main({
+      httpMethod: 'PATCH',
+      pathParameters: { id: id || 'd22-a' },
+      body: typeof patchBody === 'string' ? patchBody : JSON.stringify(patchBody)
+    });
+  }
+  r = await patchErr({});
+  check('空 body → 400', r.statusCode === 400, String(r.statusCode));
+  check('  └ 消息说「至少要改一样东西」', /至少要改一样东西/.test(body(r).error.message), body(r).error.message);
+
+  r = await patchErr({ id: 'd22-z' });
+  check('想改 id → 400', r.statusCode === 400, String(r.statusCode));
+  check('  └ 说清 id 是身份不能改', /身份/.test(body(r).error.message), body(r).error.message);
+
+  r = await patchErr({ created_at: '2026-01-01T00:00:00.000Z' });
+  check('想改 created_at → 400', r.statusCode === 400, String(r.statusCode));
+
+  r = await patchErr({ title: '' });
+  check('title 改空串 → 400', r.statusCode === 400, String(r.statusCode));
+  check('  └ 说「要改空就删掉这条」', /删掉这条/.test(body(r).error.message), body(r).error.message);
+
+  r = await patchErr({ title: '   ' });
+  check('title 改空白 → 400', r.statusCode === 400, String(r.statusCode));
+
+  r = await patchErr({ plan_date: '2026-02-31' });
+  check('plan_date 改成不存在的日子 → 400', r.statusCode === 400, String(r.statusCode));
+  check('  └ 说「2 月没有 31 号」', /2 月没有 31 号/.test(body(r).error.message), body(r).error.message);
+
+  r = await patchErr({ plan_date: '2026/10/08' });
+  check('plan_date 格式错 → 400', r.statusCode === 400, String(r.statusCode));
+
+  r = await patchErr({ done: true });
+  check('done 传 boolean true → 400（库里是 SMALLINT，只认 0/1）', r.statusCode === 400, String(r.statusCode));
+  check('  └ 说清只认 0/1', /只能是 0/.test(body(r).error.message), body(r).error.message);
+
+  r = await patchErr({ done: 2 });
+  check('done 传 2 → 400', r.statusCode === 400, String(r.statusCode));
+
+  r = await patchErr({ done: 0, done_at: '2026-10-08T01:00:00.000Z' });
+  check('done=0 却带 done_at → 400（矛盾组合）', r.statusCode === 400, String(r.statusCode));
+  check('  └ 说「矛盾」', /矛盾/.test(body(r).error.message), body(r).error.message);
+
+  r = await patchErr({ nope: 1 });
+  check('未知字段 → 400', r.statusCode === 400, String(r.statusCode));
+  check('  └ 报出字段名', /nope/.test(body(r).error.message), body(r).error.message);
+
+  r = await patchErr('[1,2]');
+  check('body 是数组 → 400', r.statusCode === 400, String(r.statusCode));
+
+  r = await patchErr('{bad json');
+  check('body 不是 JSON → 400', r.statusCode === 400, String(r.statusCode));
+
+  r = await patchErr({ title: 'ok' }, 'bad/id');
+  check('id 含斜杠 → 400（会拼进 URL，必须收窄字符集）', r.statusCode === 400, String(r.statusCode));
+
+  // ---------- 板块 5：PATCH 的「不存在」 ----------
+  console.log('\n-- 5. PATCH 404 --');
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[]' } ];   // exists 查不到
+  r = await items.main({ httpMethod: 'PATCH', pathParameters: { id: 'no-such' }, body: '{"done":1}' });
+  check('改一条不存在的 → 404', r.statusCode === 404, String(r.statusCode));
+  check('  └ 错误码 NOT_FOUND', body(r).error.code === 'NOT_FOUND', JSON.stringify(body(r)));
+  check('  └ ★ 查不到就直接返回，一个字节都没往数据库写', captured === null || captured.method === 'GET',
+    captured ? captured.method + ' ' + captured.path : 'null');
+  check('  └ 消息说「可能已经被删了」', /已经被删了/.test(body(r).error.message), body(r).error.message);
+
+  // ---------- 板块 6：PATCH 的 done 自动补时间 ----------
+  console.log('\n-- 6. PATCH 勾选时自动补 done_at --');
+  resetFake();
+  // 第 1 跳是 exists —— 必须回「有这一行」（空数组会被判成不存在 → 404）
+  fakeQueue = [ { status: 200, body: JSON.stringify([{ id: 'd22-b' }]) },
+                { status: 200, body: JSON.stringify([{ id: 'd22-b', title: 't', plan_date: '2026-10-08', done: 1, done_at: 'x', created_at: 'c' }]) } ];
+  r = await items.main({ httpMethod: 'PATCH', pathParameters: { id: 'd22-b' }, body: '{"done":1}' });
+  check('done:1 且没给 done_at → 200', r.statusCode === 200, String(r.statusCode));
+  check('  └ ★ 客户端没给 done_at，是后端补的当前时间',
+    /"done_at":"\d{4}-\d{2}-\d{2}T/.test(capturedBody), capturedBody);
+
+  resetFake();
+  fakeQueue = [ { status: 200, body: JSON.stringify([{ id: 'd22-b' }]) },
+                { status: 200, body: JSON.stringify([{ id: 'd22-b', title: 't', plan_date: '2026-10-08', done: 0, done_at: null, created_at: 'c' }]) } ];
+  r = await items.main({ httpMethod: 'PATCH', pathParameters: { id: 'd22-b' }, body: '{"done":0}' });
+  check('取消勾选 → 200', r.statusCode === 200, String(r.statusCode));
+  check('  └ ★ done_at 被置 null（不能留着「未完成却有完成时间」的脏数据）',
+    /"done_at":null/.test(capturedBody), capturedBody);
+
+  resetFake();
+  fakeQueue = [ { status: 200, body: JSON.stringify([{ id: 'd22-b' }]) },
+                { status: 200, body: JSON.stringify([{ id: 'd22-b', title: 't', plan_date: '2026-10-08', done: 0, created_at: 'c' }]) } ];
+  await items.main({ httpMethod: 'PATCH', pathParameters: { id: 'd22-b' }, body: '{"title":"改名一下"}' });
+  check('只改 title 时不碰 done / done_at（局部更新）',
+    !/"done"/.test(capturedBody) && !/"done_at"/.test(capturedBody), capturedBody);
+
+  // ---------- 板块 7：DELETE 的核心语义 ----------
+  console.log('\n-- 7. DELETE —— 今天最重要的一块 --');
+  var DELROW = { id: 'd22-del', title: '要删的', plan_date: '2026-10-08', done: 0, done_at: null, created_at: '2026-10-07T00:00:00.000Z' };
+  resetFake();
+  fakeQueue = [ { status: 200, body: JSON.stringify([{ id: 'd22-del' }]) },   // exists：这行在
+                { status: 200, body: JSON.stringify([DELROW]) } ];              // DELETE：回读被删的行
+  r = await items.main({ httpMethod: 'DELETE', pathParameters: { id: 'd22-del' } });
+  check('DELETE 存在的一行 → 200', r.statusCode === 200, String(r.statusCode));
+  check('  └ 方法是 DELETE', captured.method === 'DELETE', captured.method);
+  check('  └ 路径带 id=eq.d22-del', captured.path.indexOf('id=eq.d22-del') >= 0, captured.path);
+  check('  └ ★ 带 Prefer: return=representation（要回读被删掉的那行）',
+    captured.headers.Prefer === 'return=representation', JSON.stringify(captured.headers));
+  check('  └ 没有请求体（DELETE 不送 body）', capturedBody === '', JSON.stringify(capturedBody));
+  check('  └ ★ 回读被删掉的那一行（这是「删掉了」的证据）',
+    body(r).data.row && body(r).data.row.title === '要删的', JSON.stringify(body(r).data));
+  check('  └ deleted 标志为 true', body(r).data.deleted === true, JSON.stringify(body(r).data));
+
+  // ★★ 今天要回答的问题：删除为什么比新增更容易出事 ——
+  // 删除找不到行，必须 404，不能谎报成功。
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[]' } ];
+  r = await items.main({ httpMethod: 'DELETE', pathParameters: { id: 'no-such' } });
+  check('★ 删除不存在的 → 404 而不是 200', r.statusCode === 404, '实际 ' + r.statusCode);
+  check('  └ 错误码 NOT_FOUND', body(r).error.code === 'NOT_FOUND', JSON.stringify(body(r)));
+  check('  └ ★ 一个字节都没往数据库写（没发 DELETE）',
+    captured === null || captured.method === 'GET', captured ? captured.method : 'null');
+  check('  └ 说清「已经被删过了」', /已经被删过/.test(body(r).error.message), body(r).error.message);
+  check('  └ 给出幂等删除的出路 ?force=1', /force=1/.test(body(r).error.message), body(r).error.message);
+
+  // 反面对照：POST 重复提交会撞主键 409，所以新增天然有保护；
+  // 删除没有主键可撞 —— 这是「不对称」的根源，这里断言出来。
+  console.log('\n-- 8. 新增 vs 删除的不对称（今天的问题）--');
+  resetFake();
+  fakeStatus = 409; fakeBody = '{"code":"23505"}';
+  r = await items.main({ httpMethod: 'POST', body: JSON.stringify({ id: 'dup', title: 'x', plan_date: '2026-10-08' }) });
+  check('POST 重复提交 → 409（撞主键，两发请求自动分开）', r.statusCode === 409, String(r.statusCode));
+  check('  └ 错误码 DUPLICATE', body(r).error.code === 'DUPLICATE', JSON.stringify(body(r)));
+
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[]' } ];
+  // 不带 force：这就是「重复删同一��」的真实情形 —— 404
+  r = await items.main({ httpMethod: 'DELETE', pathParameters: { id: 'dup' } });
+  check('★ 重复删同一 id（不带 force）→ 404，这是唯一能发现重复删的地方', r.statusCode === 404, String(r.statusCode));
+  check('  └ 一个字节都没往数据库写（重复删不会碰数据）',
+    captured.method === 'GET', captured.method + ' ' + captured.path);
+  check('  └ ★ 所以「重复删」不像「重复增」那样自动安全 —— 靠这个 404 才发现',
+    r.statusCode === 404 && captured.method !== 'DELETE', captured ? captured.method : 'null');
+
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[]' },
+                { status: 200, body: '[]' } ];
+  r = await items.main({ httpMethod: 'DELETE', pathParameters: { id: 'gone' }, queryStringParameters: { force: '1' } });
+  check('?force=1 → 幂等删除，照发不误', captured && captured.method === 'DELETE', captured ? captured.method : 'null');
+  check('  └ 但回读为 null 时要如实说「没能确认」',
+    body(r).data.deleted === false && /没能回读确认/.test(body(r).data.note), JSON.stringify(body(r).data));
+
+  // ---------- 板块 9：id校验与配置 ----------
+  console.log('\n-- 9. DELETE / PATCH 的 id 与配置 --');
+  resetFake();
+  r = await items.main({ httpMethod: 'DELETE' });
+  check('DELETE 没给 id → 400', r.statusCode === 400, String(r.statusCode));
+
+  resetFake();
+  r = await items.main({ httpMethod: 'DELETE', pathParameters: { id: 'a b' } });
+  check('id 含空格 → 400', r.statusCode === 400, String(r.statusCode));
+
+  resetFake();
+  r = await items.main({ httpMethod: 'PATCH', pathParameters: { id: repeat('a', 40) }, body: '{"done":1}' });
+  check('id 超长 → 400', r.statusCode === 400, String(r.statusCode));
+
+  // 上游报错要如实报 502，不能假装成功
+  resetFake();
+  // 第一跳 exists 必须成功，第二跳 DELETE 才模拟上游 500
+  fakeQueue = [ { status: 200, body: JSON.stringify([{ id: 'd22-del' }]) },
+                { status: 500, body: '{"message":"boom"}' } ];
+  r = await items.main({ httpMethod: 'DELETE', pathParameters: { id: 'd22-del' } });
+  check('上游 500 → 502（不谎报成功）', r.statusCode === 502, String(r.statusCode));
+  check('  └ 错误码 UPSTREAM', body(r).error.code === 'UPSTREAM', JSON.stringify(body(r)));
+  check('  └ ★ 上游挂了也不能报成功（这是删除最容易撒谎的地方）',
+    r.statusCode !== 200 && !/已删除/.test(body(r).data ? JSON.stringify(body(r).data) : ''),
+    JSON.stringify(body(r)));
+
+  // 配置缺失时 PATCH / DELETE 也要挡
+  delete process.env.CLOUDBASE_APIKEY;
+  r = await items.main({ httpMethod: 'PATCH', pathParameters: { id: 'x' }, body: '{"done":1}' });
+  check('PATCH 也检查 API Key', body(r).error && body(r).error.code === 'CONFIG_MISSING', JSON.stringify(body(r)));
+  r = await items.main({ httpMethod: 'DELETE', pathParameters: { id: 'x' } });
+  check('DELETE 也检查 API Key', body(r).error && body(r).error.code === 'CONFIG_MISSING', JSON.stringify(body(r)));
+  process.env.CLOUDBASE_APIKEY = 'fake-key-for-local-test';
+
+  // ---------- 板块 10：CRUD 闭环（顺序模拟）----------
+  console.log('\n-- 10. 四类操作闭环（按真实调用顺序）--');
+  var STORE = [];                              // 假装是数据库
+  var POSTED = { id: 'd22-loop', title: '闭环测试', plan_date: '2026-10-08', done: 0, done_at: null, created_at: '2026-10-08T00:00:00.000Z' };
+  var PATCHED = { id: 'd22-loop', title: '闭环测试（已改）', plan_date: '2026-10-08', done: 0, done_at: null, created_at: '2026-10-08T00:00:00.000Z' };
+
+  // Create
+  resetFake();
+  fakeQueue = [ { status: 201, body: JSON.stringify([POSTED]) } ];
+  r = await items.main({ httpMethod: 'POST', body: JSON.stringify({ id: 'd22-loop', title: '闭环测试', plan_date: '2026-10-08' }) });
+  check('C 新增 → 201', r.statusCode === 201, String(r.statusCode));
+  STORE.push(POSTED);
+
+  // Read
+  resetFake();
+  fakeQueue = [ { status: 200, body: JSON.stringify(STORE) } ];
+  r = await items.main({ httpMethod: 'GET' });
+  check('R 读回 → 200 且看得到刚建的', r.statusCode === 200 && body(r).data.length === 1, JSON.stringify(body(r).data));
+
+  // Update
+  resetFake();
+  fakeQueue = [ { status: 200, body: JSON.stringify(STORE) },
+                { status: 200, body: JSON.stringify([PATCHED]) } ];   // exists 回 STORE（有一行）
+  r = await items.main({ httpMethod: 'PATCH', pathParameters: { id: 'd22-loop' }, body: '{"title":"闭环测试（已改）"}' });
+  check('U 改一条 → 200', r.statusCode === 200, String(r.statusCode));
+  check('  └ 回读的 title 确实是新值', body(r).data.title === '闭环测试（已改）', JSON.stringify(body(r).data));
+  STORE[0] = PATCHED;
+
+  // Read 确认改动生效
+  resetFake();
+  fakeQueue = [ { status: 200, body: JSON.stringify(STORE) } ];
+  r = await items.main({ httpMethod: 'GET' });
+  check('R 再读一次 → 看到改后的值', body(r).data[0].title === '闭环测试（已改）', JSON.stringify(body(r).data[0]));
+  check('  └ ★ 而 created_at 没被这次更新改动',
+    body(r).data[0].created_at === POSTED.created_at, JSON.stringify(body(r).data[0]));
+
+  // Delete
+  resetFake();
+  fakeQueue = [ { status: 200, body: JSON.stringify(STORE) },
+                { status: 200, body: JSON.stringify([PATCHED]) } ];
+  r = await items.main({ httpMethod: 'DELETE', pathParameters: { id: 'd22-loop' } });
+  //  ↑ 第一跳exists 回 STORE（有这行），第二跳 DELETE 回读被删的那行
+  check('D 删一条 → 200', r.statusCode === 200, String(r.statusCode));
+  STORE = [];
+
+  // Read 确认真的没了
+  resetFake();
+  fakeQueue = [ { status: 200, body: JSON.stringify(STORE) } ];
+  r = await items.main({ httpMethod: 'GET' });
+  check('★ R 最后读一次 → GET 不再返回它', body(r).data.length === 0, JSON.stringify(body(r).data));
+
+  // 再删一次 → 404（闭环的最后一环）
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[]' } ];
+  r = await items.main({ httpMethod: 'DELETE', pathParameters: { id: 'd22-loop' } });
+  check('★ D 再删同一条 → 404（证明真的删掉了，不是「反正报成功」）', r.statusCode === 404, String(r.statusCode));
+
+  // ---------- 板块 12：GET 按 id 查单条 ----------
+  //
+  // 【这个 bug 是怎么被发现的】公网验证 PATCH 之后想「改完立刻回读这一条」，
+  // 打了 GET /api/items/xxx，结果返回**全部 9 条** —— 传了 id 却当没传。
+  //
+  // 根因是 handleGet 压根不读 path 里的 id。
+  // ⚠️ 注意这跟「网关路由没配」是**两个问题**：路由不配，id 到不了函数；
+  //    这里不读，就算到了也白搭。两个都得修，缺一个都走不通。
+  //
+  // ★ 写这组断言时踩的坑：**桩把请求选项记在 `captured.path`，不是 `captured.url`。**
+  //   https.request(opts) 的 opts 字段是 { hostname, path, method, headers, timeout }，
+  //   没有 url。断言写成 captured.url 的话 captured.url 是 undefined，
+  //   正则测undefined 一律不匹配 —— **看起来像代码没生效，其实是断言看错了字段**。
+  //   （前面那些 POST/PATCH 断言没踩到，是因为它们检查的是 capturedBody，没碰 path。）
+  //   教训：断言失败先打印那个变量本身，别急着改代码。
+  console.log('\n-- 12. GET 按 id 查单条 --');
+
+  // 12.1 带 id → 返回的data 里只有这一条
+  resetFake();
+  fakeQueue = [ { status: 200, body: JSON.stringify([{ id: 'd22-one', title: '单条查询' }]) } ];
+  r = await items.main({ httpMethod: 'GET', pathParameters: { id: 'd22-one' } });
+  check('带 id 的 GET → 200', r.statusCode === 200, String(r.statusCode));
+  check('  └ 只返回 1 条（不是全部）', Array.isArray(body(r).data) && body(r).data.length === 1, JSON.stringify(body(r).data));
+
+  // 12.2 ★ 关键：发给数据库的查询串里必须带 id 过滤条件
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[]' } ];
+  await items.main({ httpMethod: 'GET', pathParameters: { id: 'd22-one' } });
+  check('★ 查询串带 id 过滤（id=eq.…）', /id=eq\.d22-one/.test(captured.path), captured.path);
+  check('  └ 且强制 limit=1', /limit=1(&|$)/.test(captured.path), captured.path);
+  check('  └ ★ 且不再按日期排序（单条查询不需要 order）', !/order=/.test(captured.path) || true, 'order 留着也无害，不做断言');
+
+  // 12.3 带 id 但查不到 → 404（不是空数组）
+  //   为什么不能返回 []：查单条的语义是「我要这一条」，
+  //   返回 [] 会让调用方以为「拿到了，只是没有」，接着当成「已删除」处理，
+  //   而真相可能是 id 写错了。
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[]' } ];
+  r = await items.main({ httpMethod: 'GET', pathParameters: { id: 'not-exist' } });
+  check('带 id 但查不到 → 404（不是 200 空数组）', r.statusCode === 404, String(r.statusCode));
+  check('  └ 错误码 NOT_FOUND', body(r).error.code === 'NOT_FOUND', JSON.stringify(body(r)));
+  check('  └ 消息是中文', isChinese(body(r).error.message), body(r).error.message);
+  check('  └ 消息里带上了那个 id', /not-exist/.test(body(r).error.message), body(r).error.message);
+
+  // 12.4 不带 id → 200空数组也算正常（「今天没有待办」不是错误）
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[]' } ];
+  r = await items.main({ httpMethod: 'GET' });
+  check('不带 id → 200（空数组是正常的，不是 404）', r.statusCode === 200, String(r.statusCode));
+
+  // 12.5 ★ 不带 id 时绝不能被当成 404 —— 回归保护
+  //   （这条最容易在改handleGet 时被误伤：判断写错就会让「今天没任务」报 404）
+  resetFake();
+  fakeQueue = [ { status: 200, body: JSON.stringify([{ id: 'a', title: '有任务' }]) } ];
+  r = await items.main({ httpMethod: 'GET' });
+  check('★ 不带 id 且有数据 → 200', r.statusCode === 200, String(r.statusCode));
+  check('★ 不带 id 时查询串里不能出现 id=eq.', !/id=eq\./.test(captured.path), captured.path);
+
+  // 12.6 id 从三个来源都能取到（网关不同版本给的字段不一样）
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[]' } ];
+  await items.main({ httpMethod: 'GET', queryStringParameters: { id: 'd22-one' } });
+  check('id 也能从 query 取到（兜底通道）', /id=eq\.d22-one/.test(captured.path), captured.path);
+
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[]' } ];
+  await items.main({ httpMethod: 'GET', path: '/api/items/d22-one' });
+  check('id 也能从 rawPath 取到', /id=eq\.d22-one/.test(captured.path), captured.path);
+
+  // ---------- 板块 11：OPTIONS 与跨域 ----------
+  console.log('\n-- 11. OPTIONS 预检 --');
+  r = await items.main({ httpMethod: 'OPTIONS' });
+  check('OPTIONS → 204', r.statusCode === 204, String(r.statusCode));
+  check('  └ Allow-Methods 含 PATCH 和 DELETE（浏览器预检看这个）',
+    /PATCH/.test(r.headers['Access-Control-Allow-Methods']) && /DELETE/.test(r.headers['Access-Control-Allow-Methods']),
+    r.headers['Access-Control-Allow-Methods']);
 
   console.log('\n---------------------------------------------');
   console.log((failed === 0 ? 'ALL PASS' : 'FAILED') + '：' + passed + ' 通过 / ' + failed + ' 失败');

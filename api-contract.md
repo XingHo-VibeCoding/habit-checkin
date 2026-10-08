@@ -200,7 +200,7 @@ curl -s "https://<CloudBase 环境域名>/api/items?limit=2"
 
 | 情况 | 响应 |
 | --- | --- |
-| 方法不是 GET | 405 `BAD_REQUEST` |
+| 方法不是 GET | 405 `METHOD_NOT_ALLOWED`（Day 22 起错误码改了这个，见 PATCH/DELETE 段）|
 | `date` 不是 `YYYY-MM-DD` | 400 `BAD_REQUEST` |
 | `limit` 非数字 / <1 / >200 | 400 `BAD_REQUEST` |
 | 云函数没配 API Key | 500 `CONFIG_MISSING` |
@@ -314,7 +314,7 @@ body 是一个 JSON 对象，字段如下（**只认这些，多一个都报错*
 | body 不是合法 JSON / 是数组 | `400 BAD_REQUEST` | 数组不接受（今日不做批量） |
 | 上游 4xx（约束不满足） | `400 BAD_REQUEST` | 消息带上游原文 |
 | 上游 5xx | `502 UPSTREAM` | |
-| 方法不是 GET/POST/OPTIONS | `405 BAD_REQUEST` | |
+| 方法不是 GET/POST/OPTIONS | `405 METHOD_NOT_ALLOWED` | Day 22 起放开到四种：`GET / POST / PATCH / DELETE`（`PUT` 仍被挡）|
 
 **所有校验都在打数据库之前做完**：非法输入一个字节都不会写进库里。
 理由是数据库的 CHECK / NOT NULL 是最后一道防线，不是输入校验 ——
@@ -325,6 +325,157 @@ body 是一个 JSON 对象，字段如下（**只认这些，多一个都报错*
 数据库的 CHECK 只验形状（`LIKE '____-__-__'`），`2026-02-31` 能过。
 所以代码里多查一层真实存在性（含闰年）。
 宁可现在告诉用户「这天不存在」，也别写进去之后排序时才发现。
+
+---
+
+## PATCH /api/items/:id（Day 22 已实现）
+
+改一条已存在的清单。**局部更新** —— body 里没出现的列保持原值。
+
+```bash
+curl -s -X PATCH https://<CloudBase 环境域名>/api/items/d22-demo \
+  -H "Content-Type: application/json" \
+  -d '{"title":"改过的标题","done":1}'
+```
+
+### 可改字段（白名单）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `title` | string ≤200 | 条目标题 |
+| `plan_date` | `'YYYY-MM-DD'` | 计划日期 |
+| `done` | **`0` / `1`** | 完成状态 |
+| `done_at` | ISO 8601 UTC 或 `null` | 完成时间 |
+
+⚠️ **两个字段故意不在白名单里：**
+
+- **`id` 不许改** —— 它是主键、是这行的身份。改 `id` 等于「把A 这条变成 B 那条」，
+  而 `reminders.item_id` 有外键指向它，改了会留下指向不存在行的孤儿引用。
+  要改身份只能「删了重建」。
+- **`created_at` 不许改** —— 它记录「这行什么时候被创建的」。
+  改它会让记录失真（三天前建的任务突然显示成今天建的）。
+
+###★ `done` 只认 0/1，不认 `true`/`false`
+
+库里 `done` 是 `SMALLINT`（跨 PostgreSQL/MySQL/SQLite 的代价，见数据模型一节）。
+送JSON 的 `true` 会被 PostgreSQL 拒：
+`invalid input syntax for type smallint`。
+
+### ★ `done` 与 `done_at` 的联动（自动）
+
+| 请求 | 后端行为 |
+| --- | --- |
+| `{"done":1}` 且没给 `done_at` | **自动补当前时间** —— 勾上的那一刻就是完成的那一刻 |
+| `{"done":0}` | **自动把 `done_at` 置 `null`** —— 否则会留下「未完成却有完成时间」的脏数据 |
+
+### 响应 200
+
+```json
+{
+  "ok": true,
+  "data": {
+    "id": "d22-demo",
+    "title": "改过的标题",
+    "plan_date": "2026-10-08",
+    "done": 1,
+    "created_at": "2026-10-08T03:00:00.000Z",
+    "done_at": "2026-10-08T03:20:11.482Z"
+  }
+}
+```
+
+`data` 里是**数据库回读的那一行**（靠 PostgREST 的 `Prefer: return=representation`），
+不是「我们以为写进去的」。
+
+### 失败
+
+| 状态码 | 错误码 | 什么时候 |
+| --- | --- | --- |
+| 400 | `BAD_REQUEST` | 缺 `id`、`title` 超长、日期格式不对、`done` 不是 0/1 |
+| 404 | `NOT_FOUND` | **`id` 不存在**（见下）|
+| 405 | `METHOD_NOT_ALLOWED` | 用了契约外的方法（如 `PUT`），响应带 `Allow` 头 |
+| 502 | `UPSTREAM` | 数据库挂了 |
+
+**404 的必要性**：PostgREST 的 PATCH 找不到行时返回 **204 No Content**（没有 body 可回读），
+和「成功改了但值恰好一样」的 200 分不开。所以代码里**先`exists()` 预查一次**，
+换来一个干净的 404。多一个 RTT 值得—— 204 那种沉默的失败最难查。
+
+---
+
+## DELETE /api/items/:id（Day 22 已实现）
+
+删一条清单。
+
+```bash
+curl -s -X DELETE https://<CloudBase 环境域名>/api/items/d22-demo
+curl -s -X DELETE "https://<CloudBase 环境域名>/api/items/d22-demo?force=1"
+```
+
+### ★ 为什么删除找不到行必须报 404，不能报成功
+
+这是新增和删除**最不对称的地方**：
+
+| | 重复提交第二次会怎样 |
+| --- | --- |
+| `POST` | 撞主键 → **409 Conflict**。两发请求天然分开，不会静默 |
+| `DELETE` | **「成功地什么都没做」** |
+
+如果 DELETE 找不到行还返回 200，调用方（前端、同伴、以后任何脚本）
+会以为「我删成功了」，而真实情况可能是**第一次请求压根没生效** —— 数据还在，
+但调用方以为已经清掉了。
+
+**谎报比报错危险得多：报错会让人去查，谎报只会让人接着往下走。**
+
+→ 所以 **0 行被删 = `404 NOT_FOUND`**。
+
+### `?force=1`（可选）
+
+显式的**幂等删除**：明知道不存在也照发，返回 200。
+用于「确保这条不在了」这类场景（重试、对账、清理脚本）。
+
+```
+DELETE /api/items/d22-demo        → 404（不存在时）
+DELETE /api/items/d22-demo?force=1 → 200（不管存不存在）
+```
+
+###响应 200
+
+```json
+{
+  "ok": true,
+  "data": {
+    "id": "d22-demo",
+    "title": "被删掉的那一条",
+    "plan_date": "2026-10-08",
+    "done": 0,
+    "created_at": "2026-10-08T03:00:00.000Z",
+    "done_at": null
+  }
+}
+```
+
+⚠️ **DELETE 不带 body，但恰恰最需要 `Prefer: return=representation`** ——
+没东西可送，但**「被删掉的那行长什么样」是唯一能证明删对了的东西**。
+
+这也是Day 22 踩的一个坑：最初想用「有没有 body」来推断要不要带回读，
+结果 DELETE 永远读不回。**改成由调用方按 method 显式传参**才对。
+
+### ⚠️⚠️ 级联删除：删一条清单会连带删掉它的提醒
+
+`reminders.item_id` 外键带 `ON DELETE CASCADE`。删一条清单，
+挂在它下面的提醒**不会被问一句**就一起删掉。
+
+→ 删除前**必须先查清楚这条下面挂着什么**。只删「我看见的那一条」，
+实际影响范围可能是好几条。
+
+### 失败
+
+| 状态码 | 错误码 | 什么时候 |
+| --- | --- | --- |
+| 400 | `BAD_REQUEST` | 缺 `id` |
+| 404 | `NOT_FOUND` | **`id` 不存在**（不带 `force` 时）|
+| 405 | `METHOD_NOT_ALLOWED` | 契约外的方法，响应带 `Allow` 头 |
+| 502 | `UPSTREAM` | 数据库挂了 |
 
 ---
 
@@ -375,21 +526,28 @@ curl -s "https://<CloudBase 环境域名>/api/reminders?item_id=seed-item-01"
 
 ---
 
-## 尚未实现的接口（Day 20+，只占位）
-
-这些**先写在这里是为了让前端知道将来会有什么**，避免到时候接口来回改。
+## 接口清单与实现状态
 
 | 接口 | 用途 | 状态 |
 | --- | --- | --- |
+| `GET /api/health` | 健康检查 | ✅ Day 15 已实现 |
 | `GET /api/items` | 拉取清单 | ✅ **Day 17 已实现**，Day 19 重构为分层 |
 | `GET /api/reminders` | 拉取提醒 | ✅ **Day 17 已实现**，Day 19 重构为分层 |
 | `POST /api/items` | 新增一条 | ✅ **Day 18 已实现**，Day 19 重构为分层 |
-| `PATCH /api/items/:id` | 改（勾掉 / 改名） | 未实现（第 4 周） |
-| `DELETE /api/items/:id` | 删除 | 未实现（第 4 周） |
-| `GET /api/anniversaries` | 拉取倒数纪念日 | 未实现（**表也没建**） |
+| `PATCH /api/items/:id` | 改（勾掉 / 改名） | ✅ **Day 22 已实现** —— 局部更新，可改字段见上文白名单 |
+| `DELETE /api/items/:id` | 删除 | ✅ **Day 22 已实现** —— 不存在返404，`?force=1` 可显式幂等 |
+| `GET /api/anniversaries` | 拉取倒数纪念日 | ⬜未实现（**表也没建**） |
 
-⚠️ **前端现在仍然完全走 localStorage**（`habit-checkin:v1` 一个 key）。
-上面三个接口已经能读写真数据，但前端还没接 —— 接的那天要同时做字段映射（见数据模型一节）。
+### 验证方法（Day 22）
+
+数据库侧的 select 前后对比脚本：`db/verify-day22-patch-delete.sql`。
+**接口返回的 JSON 是云函数「以为写进去了」的东西，select 查到的才是数据库真存了什么。**
+判据要落在 select 上。
+
+⚠️ **前端仍然完全走 localStorage**（`habit-checkin:v1` 一个 key）。
+接口已经能读写真数据，但前端的**新增 / 勾选 / 删除三个动作都还没接**——
+Day 21 深夜复核发现这条（验收表 A7 从✅ 降为 ⚠️）。
+Day 22 只给「删除」加了**二次确认弹层**（拦住误触），并未把删除接到接口上。
 
 ---
 
@@ -562,6 +720,71 @@ Day 18 加的：`POST /api/items` 能真写入、能读回、重复提交被拒 
 ```
 https://habit-checkin-d9giln6ke6594e88b-1499597872.ap-shanghai.app.tcloudbase.com/api
 ```
+
+---
+
+## ⚠️ 附录：HTTP 网关的「路径透传」必须开（Day 22 公网实证踩到）
+
+**2026-10-08 实测**：`PATCH /api/items/xxx` 报 `400 「URL 里没有 id」`。
+根因**不是**路由路径配错，而是 **HTTP 网关路由里的「路径透传」开关是关闭的**。
+
+### ★ 路径透传关闭时的行为（控制台原文）
+
+> 关闭路径透传时，后端服务（资源）将收到**不带触发路径**的请求；
+> 当访问 `/api/items/more/path` 时，后端服务收到的路径为 `/more/path`
+
+也就是 `/api/items/seed-item-01` → 云函数只看到 `/seed-item-01`，
+**触发路径 `/api/items` 被剥掉了**。而 `pathId()` 的正则要的是
+`/\/api\/items\/([^/?#]+)/`，缺了前缀自然匹配不上 → 三个来源全落空 → 400。
+
+### 修法：只开「路径透传」，**不用改访问路径**
+
+控制台 →左侧 **HTTP 网关**（⚠️ **不在函数配置页里**，那天找了半天）
+→ 点 `/api/items` 那行的「编辑」→ **把「路径透传」打开** → 确定。
+
+**「访问路径」保持 `/api/items` 不变**，方法也不用动。
+实测开了透传之后，`/api/items/{id}` 立刻可用，**零副作用**：
+
+```
+GET /api/items/seed-item-01  → 1 条  ✅（修好）
+GET /api/items?date=…        → 4 条  ✅（列表没坏）
+GET /api/items               → 9 条  ✅（列表没坏）
+GET /api/items?id=xxx        → 1 条  ✅（query 兜底也没坏）
+```
+
+### 快速证伪手法（下次遇到「参数没收到」先打这个）
+
+同一资源分别用两种形式各打一次：
+
+```
+/api/items?id=xxx   → 200     说明代码对、网关没传
+/api/items/xxx      → 400     ← 差异就在网关
+```
+
+两个都失败才是代码问题。**这一招能把「代码 bug」和「网关配置」当场分开。**
+
+### ⚠️ 别被 `allow-methods` 头骗了
+
+`access-control-allow-methods: GET, POST, PATCH, DELETE, OPTIONS` 正确，
+但它**只反映代码里的 `ALLOWED` 白名单，跟网关路由毫无关系**。
+路径透传关着的时候，这个头照样显示四种。
+
+### 另一面：`GET /api/items/{id}` 单条查询曾经是坏的
+
+不只是网关的问题 —— **`handleGet` 压根不读 path 里的 id**，
+所以传了 id 也当没传，返回全部 9 条。
+
+**两个问题叠在一起，必须都修**：
+网关不透传 → id 到不了函数；代码不读 → 到了也白搭。
+（这个 bug 藏了 5 天，因为 Day 17~21 一直用 `?date=` 查列表，
+**没人走过单条查询这条路 —— 没被走过的分支不会被发现。**）
+
+现在 `GET /api/items/{id}` 已支持，且**查不到时返回 404 而不是空数组**。
+
+**教训**：契约文档写 `/api/items/:id` 是 REST 标准写法，
+但**网关实际怎么转发，代码就认什么**。
+写完接口一定要用**真实路径**打一次公网 ——
+桩测和 `?id=` 兜底都不能替代。
 
 ---
 

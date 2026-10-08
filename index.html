@@ -716,6 +716,53 @@
       .undo { transition: none; transform: translate(-50%, 0); }
     }
 
+    /* ---------- Day 22：删除二次确认弹层 ----------
+       沿用当前主题（白底 + 单一蓝强调 + 危险红），不引入新配色。
+       危险色只给「删除」按钮 —— 这是本模块唯一不可逆的动作，
+       视觉上必须和「保留」拉开距离，不能两个按钮长得一样让用户犹豫。 */
+    .confirm {
+      position: fixed; inset: 0; z-index: 60;
+      display: flex; align-items: center; justify-content: center;
+      padding: var(--space-4);
+      background: rgba(31, 35, 40, 0.45);   /* 遮罩压暗，把注意力收到弹层上 */
+    }
+    /* hidden 属性要真的隐藏：.confirm 用了 display:flex，会盖掉 hidden 的默认 none */
+    .confirm[hidden] { display: none; }
+    .confirm-card {
+      width: 100%; max-width: 22rem;
+      background: var(--card);
+      border-radius: var(--radius-md);
+      padding: var(--space-5);
+      box-shadow: 0 12px 32px rgba(31, 35, 40, 0.18);
+    }
+    .confirm-title {
+      margin: 0 0 var(--space-2);
+      font-size: 1.0625rem; font-weight: 650; color: var(--ink);
+    }
+    .confirm-body {
+      margin: 0 0 var(--space-2);
+      font-size: 0.9375rem; line-height: 1.55; color: var(--ink);
+      /* 标题可能很长，删掉后要在弹层里再念一遍，不能截断 */
+      overflow-wrap: anywhere;
+    }
+    .confirm-note {
+      margin: 0 0 var(--space-4);
+      font-size: 0.8125rem; line-height: 1.5; color: var(--muted);
+    }
+    .confirm-actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
+    .btn {
+      font: inherit; font-size: 0.9375rem;
+      min-height: 44px;                /* 触屏最小命中区 */
+      padding: 0 var(--space-4);
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
+      cursor: pointer;
+    }
+    .btn-ghost { background: var(--surface-sunk); color: var(--ink); border-color: var(--line-strong); }
+    .btn-ghost:hover { background: var(--accent-wash); }
+    .btn-danger { background: var(--danger); color: #ffffff; }
+    .btn-danger:hover { background: #a8342b; }   /* hover 必须更深，同accent 铁律 */
+
     /* ---------- Day 9：键盘焦点可见（WCAG 2.4.7） ---------- */
     button:focus-visible,
     input:focus-visible,
@@ -934,6 +981,24 @@
   <div class="undo" id="undoBar" role="status" aria-live="polite" aria-hidden="true">
     <span class="undo-text" id="undoText"></span>
     <button class="undo-btn" id="undoBtn" type="button">撤销</button>
+  </div>
+
+  <!-- Day 22：删除二次确认弹层。
+       为什么撤销条不能代替它：撤销条是**事后**补救，而且只有 2.6 秒窗口；
+       手机上 2.6 秒滑走一条真数据换不回来。而删除是本页唯一不可逆的动作，
+       所以在**动手之前**拦一道，而不是事后指望用户抓住那2.6 秒。 -->
+  <div class="confirm" id="confirmMask" hidden>
+    <div class="confirm-card" role="alertdialog" aria-modal="true"
+         aria-labelledby="confirmTitle" aria-describedby="confirmBody">
+      <h2 class="confirm-title" id="confirmTitle">删除这一条？</h2>
+      <p class="confirm-body" id="confirmBody"></p>
+      <p class="confirm-note">删掉就找不回来了。误触的话还可以在删除后 2.6 秒内撤销，
+         但过了就没了。</p>
+      <div class="confirm-actions">
+        <button class="btn btn-ghost" id="confirmNo" type="button">保留</button>
+        <button class="btn btn-danger" id="confirmYes" type="button">删除</button>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -2167,7 +2232,61 @@
       render();
     }
 
+    // Day 22：删除改为「先确认，再删」。
+    //
+    // 【为什么撤销条不能代替确认】
+    //撤销条是**事后**补救，窗口只有 2.6 秒。而删除是本页唯一不可逆的操作 ——
+    // 2.6 秒滑过去，条目就没了；等用户反应过来再点撤销已经晚了。
+    // Day 10 把整行改成可点之后，手指落在行里时✕ 就在手边，误触概率反而更高，
+    // 所以要在**动手之前**拦一道。
+    //
+    // 【为什么不用原生 confirm()】
+    // 原生对话框在安卓 Chrome 里样式不可控、文案无法排版、标题长到会撑破，
+    // 而且它同步阻塞，测试里也不好断言。用自己的弹层还能保证标题就是条目标题，
+    // 用户能看清自己到底要删哪一条。
+    function askDelete(title, onYes) {
+      var mask = document.getElementById('confirmMask');
+      var bodyEl = document.getElementById('confirmBody');
+      var yes = document.getElementById('confirmYes');
+      var no = document.getElementById('confirmNo');
+      if (!mask) { onYes(); return; }          // 弹层不存在时的兜底，别把删除功能整体卡死
+
+      bodyEl.textContent = '「' + title + '」';
+
+      function done() {
+        mask.hidden = true;
+        yes.removeEventListener('click', onYesClick);
+        no.removeEventListener('click', onNo);
+        mask.removeEventListener('click', onMask);
+        document.removeEventListener('keydown', onKey);
+      }
+      function onYesClick() { done(); onYes(); }
+      // 「保留」是安全侧：不点任何东西绝不能删东西（下面遮罩点击也走这里）
+      function onNo() { done(); }
+      function onKey(e) { if (e.key === 'Escape') done(); }
+
+      // 点遮罩空白处关闭：等同「保留」。这是弹层的通用安全约定 ——
+      // 默认应该落在不破坏数据的那一侧。
+      function onMask(e) { if (e.target === mask) done(); }
+
+      yes.addEventListener('click', onYesClick);
+      no.addEventListener('click', onNo);
+      mask.addEventListener('click', onMask);
+      document.addEventListener('keydown', onKey);
+      mask.hidden = false;
+      // 焦点移到「删除」上：键盘/读屏用户一进来就知道这里是要做决定的地方。
+      // 但不自动触发 —— 焦点只是落点，不是「默认同意删除」。
+      yes.focus();
+    }
+
     function removeItem(id) {
+      var index = -1;
+      state.items.forEach(function (i, n) { if (i.id === id) index = n; });
+      if (index < 0) return;
+      askDelete(state.items[index].title, function () { doRemoveItem(id); });
+    }
+
+    function doRemoveItem(id) {
       var index = -1;
       state.items.forEach(function (i, n) { if (i.id === id) index = n; });
       if (index < 0) return;
