@@ -256,16 +256,37 @@ var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
   check('queryString 原始串也能解析', captured.path.indexOf('plan_date=eq.2026-10-03') >= 0 && captured.path.indexOf('limit=7') >= 0, captured.path);
 
   // ---- 7. 上游报错 → UPSTREAM，不把裸 502 抛给前端 ----
+  //
+  // ⚠️ Day 23 改了两条断言。原来要求「消息里带上状态码 401」和「带上有『不是 JSON』」——
+  //   那是**把上游技术细节拼给人看**，正是今天要改掉的东西。
+  //   旧断言不是写错了，是它如实记录了 Day 17 当时的行为；Day 23 有意改了行为，
+  //   所以断言要跟着改 —— 不改就会变成「期待一个已经修好的缺陷」那类过期断言。
+  //
+  // 新的判据是：**消息里不该有任何技术细节，但错误码必须还在。**
   fakeStatus = 401;
   fakeBody = '{"code":"MISSING_CREDENTIALS"}';
   r = await items.main({ httpMethod: 'GET' });
   check('上游 401 → 500 UPSTREAM', r.statusCode === 500 && body(r).error.code === 'UPSTREAM', JSON.stringify(body(r)));
-  check('UPSTREAM 消息里带上状态码', /401/.test(body(r).error.message), body(r).error.message);
+  check('Day 23：消息是中文', isChinese(body(r).error.message), body(r).error.message);
+  check('★ Day 23：不再把状态码 401 拼给人看', !/401/.test(body(r).error.message), body(r).error.message);
+  check('★ Day 23：说了「不是你操作的问题」', /不是你操作/.test(body(r).error.message), body(r).error.message);
+  check('★ Day 23：给了下一步（重试 or 联系开发）', /重试|联系开发/.test(body(r).error.message), body(r).error.message);
 
   fakeStatus = 200;
   fakeBody = '<html>不是 JSON</html>';
   r = await items.main({ httpMethod: 'GET' });
-  check('上游返回非 JSON → UPSTREAM', body(r).error.code === 'UPSTREAM' && /不是 JSON/.test(body(r).error.message), JSON.stringify(body(r)));
+  check('上游返回非 JSON → UPSTREAM', body(r).error.code === 'UPSTREAM', JSON.stringify(body(r)));
+  check('★ Day 23：JSON 解析失败单独成句（说清是后端问题）', /格式不对|后端/.test(body(r).error.message), body(r).error.message);
+  check('★ Day 23：不再把「不是 JSON」原文拼给人看', !/不是 JSON/.test(body(r).error.message), body(r).error.message);
+
+  // Day 23 ★ 最关键的一条：**任何裸报错特征都不能出现在响应里。**
+  // 这条断言等于把「不许再犯」写成可执行的判据，比写注释管用。
+  fakeStatus = 500;
+  fakeBody = 'boom';
+  r = await items.main({ httpMethod: 'GET' });
+  var m = body(r).error.message;
+  check('★ 三类错误都不泄漏技术细节', !/ENOTFOUND|ECONNREFUSED|errno|sqlstate|at Object|at Module|node:internal|\.js:\d+|https?:\/\//.test(m), m);
+  check('★ 但仍是中文且有出路', isChinese(m) && /联系开发|重试/.test(m), m);
 
   // =====================================================================
   // Day 18 · POST
@@ -459,7 +480,21 @@ var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
   fakeBody = '{"code":"23502","message":"null value in column violates not-null constraint"}';
   r = await items.main({ httpMethod: 'POST', body: JSON.stringify(payload({ id: 'up1' })) });
   check('上游 400（约束不满足）→ 400 BAD_REQUEST', r.statusCode === 400 && body(r).error.code === 'BAD_REQUEST', r.statusCode + ' / ' + r.body);
-  check('  └ 消息里带上游原文（好排查）', /not-null/.test(body(r).error.message), body(r).error.message);
+  //
+  // Day 23：这条断言原来要求「消息里带上游原文」（匹配 /not-null/）——
+  //   那正是今天要改掉的行为：**把 PostgREST 的英文约束原文拼给人看**。
+  //   用户看到 `null value in column violates not-null constraint` 只会懵。
+  //
+  // 新的判据分两条：① 英文原文不该出现；② 中文推测要说清，且**明说是推测**
+  //   —— 猜错比不给更糟（会让人去查一个不存在的问题）。
+  check('★ Day 23：不再把英文约束原文（not-null）拼给人看',
+    !/not-null|violates|null value/i.test(body(r).error.message), body(r).error.message);
+  check('★ Day 23：中文说清了「可能是必填项为空」',
+    /必填项|为空/.test(body(r).error.message), body(r).error.message);
+  check('★ Day 23：明说是「可能」，不把推测说成确定',
+    /可能|无法理解/.test(body(r).error.message), body(r).error.message);
+  check('★ Day 23：给出下一步（联系开发）',
+    /联系开发/.test(body(r).error.message), body(r).error.message);
 
   fakeStatus = 500;
   fakeBody = '{"error":"internal"}';
@@ -990,6 +1025,118 @@ var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
   check('  └ Allow-Methods 含 PATCH 和 DELETE（浏览器预检看这个）',
     /PATCH/.test(r.headers['Access-Control-Allow-Methods']) && /DELETE/.test(r.headers['Access-Control-Allow-Methods']),
     r.headers['Access-Control-Allow-Methods']);
+
+  // ============ Day 23：三类错误提示统一 ============
+  //
+  // 【今天回答的问题：哪句裸报错改成了人话？】
+  //改前：fail('UPSTREAM', String(e.message))
+  //   → 用户看到 `request to https://... failed, reason: getaddrinfo ENOTFOUND`
+  // 改后：说人话+ 说清「这不是你操作的问题」+ 给出下一步。
+  //
+  // 下面逐类验证「该说的说到了、该说的没泄漏」。
+  console.log('\n-- 13. Day 23 · 三类错误提示 --');
+
+  //── ① 输入不对：用户自己能改，说得清是哪一改错了 ──
+  r = await items.main({ httpMethod: 'GET', queryStringParameters: { date: '2026/10/02' } });
+  check('类① 输入不对 → 400', r.statusCode === 400, String(r.statusCode));
+  check('  └ 中文', isChinese(body(r).error.message), body(r).error.message);
+  check('  └ ★ 直接指出是哪个字段错了（用户能自己改）', /date/.test(body(r).error.message), body(r).error.message);
+  check('  └ 期望的格式直接写在话里', /YYYY-MM-DD/.test(body(r).error.message), body(r).error.message);
+
+  // ── ② 配置缺失：只有开发能修 ──
+  delete process.env.CLOUDBASE_APIKEY;
+  delete process.env.CLOUDBASE_API_KEY;
+  delete process.env.TCB_API_KEY;
+  delete process.env.API_KEY;
+  r = await items.main({ httpMethod: 'GET' });
+  check('类② 配置缺失 → 500', r.statusCode === 500 && body(r).error.code === 'CONFIG_MISSING', JSON.stringify(body(r)));
+  check('  └ 中文', isChinese(body(r).error.message), body(r).error.message);
+  check('  └ ★ 明说「不是你操作的问题」（关键：不然用户会反复重试）', /不是你操作/.test(body(r).error.message), body(r).error.message);
+  check('  └ ★ 指明该找谁：开发者在控制台开API Key', /开发/.test(body(r).error.message) && /控制台/.test(body(r).error.message), body(r).error.message);
+  check('  └ ★ 不带任何密钥值', !/test-key/.test(body(r).error.message), body(r).error.message);
+  process.env.CLOUDBASE_APIKEY = 'test-key';
+
+  // ── ③ 上游/网络失败：用户能做的只有等 ──
+  resetFake();
+  fakeQueue = [ { status: 200, body: '<html>不是 JSON</html>' } ];
+  r = await items.main({ httpMethod: 'GET' });
+  check('类③ 上游挂了 → 500 UPSTREAM', r.statusCode === 500 && body(r).error.code === 'UPSTREAM', JSON.stringify(body(r)));
+  check('  └ 中文', isChinese(body(r).error.message), body(r).error.message);
+  check('  └ ★ 明说「不是你操作的问题」', /不是你操作/.test(body(r).error.message), body(r).error.message);
+
+  // ★ 各类错误共同的红线：**一条都不许泄漏技术细节**。
+  //   这组用各种真实会遇到的英文报错去撞，撞出来的消息必须都干净。
+  var leaks = [
+    { name: 'getaddrinfo ENOTFOUND', raw: 'getaddrinfo ENOTFOUND api.tcloudbasegateway.com' },
+    { name: 'ECONNREFUSED',   raw: 'connect ECONNREFUSED 127.0.0.1:5432' },
+    { name: 'ETIMEDOUT',      raw: 'Error: ETIMEDOUT' },
+    { name: 'socket hang up', raw: 'socket hang up' },
+    { name: 'JSON 解析失败',  raw: 'Unexpected token < in JSON at position 0' },
+    { name: '内网地址',        raw: 'connect http://10.0.0.5:8080/internal failed' }
+  ];
+  leaks.forEach(function (k) {
+    resetFake();
+    fakeQueue = [ { status: 200, body: '__BOOM__' } ];
+    var human = require(path.join(__dirname, 'errors-human.js'));
+    var msg = human.humanUpstream(new Error(k.raw), null);
+    var dirty = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|errno|errno|sqlstate|127\.0\.0\.1|10\.0\.0\.|token|Unexpected token|<html>|at Object|node:internal|:\d+:\d+/.test(msg);
+    check('★ ' + k.name + ' → 不泄漏到用户', !dirty, msg);
+    check('  └ ' + k.name + ' → 仍是中文人话', isChinese(msg), msg);
+  });
+
+  // ── 三类错误的「下一步动作」必须不同 ──
+  //这是分三类的**唯一理由**：合成一个「操作失败」等于把排查成本推给了不该管的人。
+  resetFake();
+  fakeQueue = [ { status: 200, body: '<html>x</html>' } ];
+  var rUp = await items.main({ httpMethod: 'GET' });
+  var rIn = await items.main({ httpMethod: 'GET', queryStringParameters: { date: 'bad' } });
+  check('★ 输入类让用户自己改（出现字段名）', /date/.test(body(rIn).error.message));
+  check('★ 上游类让用户等或联系开发（不出现字段名）', !/date/.test(body(rUp).error.message), body(rUp).error.message);
+
+  // ── Day 23 审计 3/4 补的断言 ──
+  // 这几条是审计脚本audit_day23_input.js 抓出来的真问题，
+  // 写进常驻测试是为了**以后改代码时不会退化回去** ——
+  // 审计脚本是一次性快照，只有测试是每次都跑的。
+  console.log('\n-- 14. Day 23 · 审计补的校验（非法输入 / 静默忽略）--');
+
+  // ① '2026-02-31' 格式对但日子不存在 → 以前 200 空数组（跟「这天没待办」长得一样）
+  resetFake();
+  r = await items.main({ httpMethod: 'GET', queryStringParameters: { date: '2026-02-31' } });
+  check('date 格式对但日子不存在 → 400（不是 200 空数组）', r.statusCode === 400, String(r.statusCode));
+  check('  └ ★ 说清是「不存在」不是「格式错」', /不是个真实存在的日子/.test(body(r).error.message), body(r).error.message);
+
+  // ② 拼错的查询参数以前被静默忽略 → 调用方以为筛过了，其实拿到全量
+  resetFake();
+  r = await items.main({ httpMethod: 'GET', queryStringParameters: { titel: 'x' } });
+  check('拼错的查询参数 → 400（不静默忽略）', r.statusCode === 400, String(r.statusCode));
+  check('  └ ★ 把参数名原样还给你', /titel/.test(body(r).error.message), body(r).error.message);
+
+  // ③ ?id= 是 Day 22 特意留的兜底通道，安全检查不能误伤它
+  resetFake();
+  r = await items.main({ httpMethod: 'GET', queryStringParameters: { id: 'seed-item-01' } });
+  check('?id= 兜底通道仍然可用（不被守卫误伤）', r.statusCode === 404 || r.statusCode === 200, String(r.statusCode));
+
+  // ④ GET 的 id 也校验格式（PATCH/DELETE 一直有，GET 原来漏了）
+  //   注意 path 要写成完整形态 /api/items/xxx —— pathId() 里那条正则
+  //   匹配的是 '/api/items/([^/?#]+)'，只写 /xxx 匹配不到，id 会是空串。
+  //   （我自己第一版就踩了这个：断言写错，看起来像代码没修。）
+  resetFake();
+  r = await items.main({ httpMethod: 'GET', path: "/api/items/' OR 1=1" });
+  check('GET id 带注入字符 → 400', r.statusCode === 400, String(r.statusCode));
+  check('  └ ★ 不发请求就挡下（stub 没被调用）', captured === null, JSON.stringify(captured && captured.path));
+
+  // ⑤ event 不是对象 → 400。以前默默按 GET 处理，返回 200 + 全量数据。
+  resetFake();
+  r = await items.main(null);
+  check('event 是 null → 400（不再默默按 GET 处理）', r.statusCode === 400, String(r.statusCode));
+  check('  └ ★ 明说这不是用户的问题', /不是你的操作/.test(body(r).error.message), body(r).error.message);
+
+  // ⑥ reminders 收下 ?date= 却不用它 → 以前 200 全量（筛选被静默丢掉）
+  resetFake();
+  var rem = require(path.join(__dirname, 'reminders', 'index.js'));
+  r = await rem.main({ httpMethod: 'GET', queryStringParameters: { date: 'x/y' } });
+  check('reminders ?date= → 400（不静默丢弃筛选）', r.statusCode === 400, String(r.statusCode));
+  check('  └ ★ 说清为什么不支持', /不支持的查询参数/.test(body(r).error.message), body(r).error.message);
 
   console.log('\n---------------------------------------------');
   console.log((failed === 0 ? 'ALL PASS' : 'FAILED') + '：' + passed + ' 通过 / ' + failed + ' 失败');

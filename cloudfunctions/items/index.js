@@ -22,7 +22,7 @@
 // ★ 唯一一处 require。数据访问层——只经它，不直接碰 https。
 var repo = require('./itemsRepository');
 
-var VERSION = 'day22';
+var VERSION = 'day23';
 var DEFAULT_LIMIT = 100;
 var MAX_LIMIT = 200;
 
@@ -77,6 +77,41 @@ function ok(data) {
 function fail(code, message) {
   return { ok: false, error: { code: code, message: message } };
 }
+
+// ============ Day 23：三类错误的人话层（已抽到共享文件） ============
+//
+// 改前：`fail('UPSTREAM', String(e.message))` —— 页面上的用户看到的是
+//      `request to https://... failed, reason: getaddrinfo ENOTFOUND`
+// 改后：说人话，并说清「这不是你操作的问题」。
+//
+// 为什么两个云函数共用一个文件：Day 17~20 每次改 items 都要记得改 reminders，
+// 已经漏过一次。两处措辞漂移的话，同一件事就有两种说法，排查更费劲。
+//
+// 完整说明见 cloudfunctions/errors-human.js。
+//
+// ⚠️ 为什么这里的 require 要试**两个**路径（Day 23 部署时踩的坑）：
+//   仓库里这个文件跟items/ 是兄弟目录，所以路径是 '../errors-human.js'；
+//   但**部署时整个函数包会被解压成一个独立的根目录**，父目录根本不存在，
+//   只写 '../errors-human.js' 的话，控制台点部署不会报错，
+//   一调用就 `Cannot find module '../errors-human.js'` —— 500，而且日志里很难看出是路径问题。
+//   （这两个路径我都真跑过：包内自检确实FAIL，报的就是上面那句。）
+// → 两个都试：先试包内的 './'（部署后能走这条），再退回 '../'（本地仓库里能走那条）。
+var human = (function () {
+  try {
+    return require('./errors-human.js');
+  } catch (e1) {
+    return require('../errors-human.js');
+  }
+})();
+var humanValidation = human.humanValidation;
+var humanConfig = human.humanConfig;
+// 传 log 进去，让原文进日志而不是进响应。
+var humanUpstream = function (e) { return human.humanUpstream(e, log); };
+
+// ⚠️ 但有一个例外要小心】上游约束报错（23505 主键冲突那类）
+//   **必须**把上游原文带出来 —— 那里面有「id 重复了」这类用户能理解、
+//   而且必须知道的细节。所以它不进 catch，走 handlePost / handlePatch
+//   自己的 400 分支（见 guessDbReason）。别为了「统一」把有用的信息也抹掉。
 
 // ② HTTP 访问服务的「集成响应」包装：自己给状态码和响应头。
 //    X-Version 是部署探针 —— 改完云函数没生效时，先看它变没变。
@@ -315,16 +350,30 @@ async function handlePost(event, startedAt) {
   }
 
   // 字段没满足数据库约束（比如漏了 NOT NULL、CHECK 没过）。
-  // 我们的校验已经挡了大部分，漏到这里的说明两边规则不一致 —— 消息里带上原文。
+  // 我们的校验已经挡了大部分，漏到这里的说明两边规则不一致。
+  //
+  // Day 23：**原文不再直接拼给用户**。PostgREST 的英文原文长这样：
+  //   `null value in column "title" violates not-null constraint`
+  // 用户看到它只会懵 —— 哪个title？什么 not-null？
+  // 改成先猜一个**可能的**中文说法，并且**明说是推测**（不要假装确定）。
+  //
+  // ⚠️ 原文仍要留（去日志），因为「两边规则不一致」这种问题只有对照原文才查得出来。
   if (r.status === 400 || r.status === 422) {
-    log({ m: 'POST', id: row.id, st: 'rejected', up: r.status, ms: Date.now() - startedAt });
+    log({ m: 'POST', id: row.id, st: 'rejected_detail', up: r.status, raw: String(r.text).slice(0, 300) });
     return withHttp(400, fail('BAD_REQUEST',
-      '数据库拒收了这一行（可能是字段对不上表结构）：' + r.text.slice(0, 300)), event);
+      '这一条没能存进数据库：' + guessDbReason(r.text) +
+      '如果反复出现，说明页面和数据库的字段对不上，请联系开发。'), event);
   }
+
 
   if (r.status < 200 || r.status >= 300) {
     log({ m: 'POST', id: row.id, st: 'upstream', up: r.status, ms: Date.now() - startedAt });
-    return withHttp(502, fail('UPSTREAM', 'PG REST 返回 ' + r.status + '：' + r.text.slice(0, 300)), event);
+    // Day 23：**改前** 'PG REST 返回 ' + r.status + '：' + r.text.slice(0, 300)
+    //   → 用户看到 `PG REST 返回 503：upstream connect error...`
+    //   状态码和 PostgREST 原文都是给排查看的，不该直接拼给人。
+    //   原文留进日志（上面那行log 里补raw），人话走 humanUpstream。
+    log({ m: 'POST', id: row.id, st: 'upstream_detail', up: r.status, raw: String(r.text).slice(0, 300) });
+    return withHttp(502, fail('UPSTREAM', humanUpstream(new Error('PG REST 返回 ' + r.status + '：' + r.text))), event);
   }
 
   // 201/200 + return=representation → repository 已把回读的那一行解析好。
@@ -337,6 +386,33 @@ async function handlePost(event, startedAt) {
   }
   log({ m: 'POST', id: row.id, st: 'inserted', ms: Date.now() - startedAt });
   return withHttp(201, ok(r.parsed), event);
+}
+
+//把数据库的英文约束错误翻成「能看懂但不死咬」的中文。
+//
+//刻意做成**推测**而不是断言：约束错误种类很多，我不可能全cover，
+//猜错比不给更糟 —— 会让人去查一个不存在的问题。
+//所以每句都带「可能」，并统一给出「不对就联系开发」的出口。
+function guessDbReason(text) {
+  var t = String(text || '').toLowerCase();
+
+  if (t.indexOf('not-null') >= 0 || t.indexOf('null value') >= 0) {
+    var col = String(text).match(/column "([^"]+)"/);
+    return '可能有必填项是空的' + (col ? '（字段 ' + col[1] + '）' : '') + '。';
+  }
+  if (t.indexOf('too long') >= 0 || t.indexOf('character varying') >= 0 ||
+      t.indexOf('value too long') >= 0) {
+    var col2 = String(text).match(/column "([^"]+)"/);
+    return '某一项太长了' + (col2 ? '（字段 ' + col2[1] + '）' : '') + '，请缩短一点。';
+  }
+  if (t.indexOf('check') >= 0 || t.indexOf('chk_') >= 0) {
+    return '某一项的值不符合要求（比如日期格式、勾选只能是 0 或 1）。';
+  }
+  if (t.indexOf('duplicate') >= 0 || t.indexOf('unique') >= 0 || t.indexOf('23505') >= 0) {
+    return '有一条内容跟现有的重了。';
+  }
+  // 认不出来就实说认不出来 —— 这比编一个像模像样的原因诚实。
+  return '数据库给出的原因无法理解（这本身就是个需要排查的问题）。';
 }
 
 // ⑩ GET 分支。Day 17 的逻辑，一字未改。
@@ -352,16 +428,59 @@ async function handleGet(event, startedAt) {
   // 这里不读也还是返回全部。两个都得修，缺一个都走不通。
   var id = pathId(event);
 
+  // Day 23 审计补的：GET 的 id 也要校验格式。
+  //   PATCH / DELETE 分支一直有这道校验（Day 22 加的），唯独 GET 没有——
+  //   于是 `GET /api/items/任意一串垃圾` 会直接拼进 URL 发给数据库。
+  //   现在三处口径一致了：**id 一律先查格式，再拿去查库**。
+  //   长度上限 36 是跟数据库 CHAR(36) 对齐。
+  if (id.length > 36) {
+    return withHttp(400, fail('BAD_REQUEST', 'id 太长了（' + id.length + ' 字），最多 36 字。'), event);
+  }
+  if (id && !/^[A-Za-z0-9_-]+$/.test(id)) {
+    return withHttp(400, fail('BAD_REQUEST',
+      'id 只能含字母、数字、下划线和连字符，收到 "' + id + '"。'), event);
+  }
+
   // date 过滤（YYYY-MM-DD）。库里 plan_date 就是 CHAR(10)，格式对不上直接 400，
   // 别把非法值拼进 URL 让数据库去报语法错 —— 那样的错误信息前端没法看。
+  //
+  // Day 23 审计补的一条：**只查格式不够，还得查这日子存不存在**。
+  //   '2026-02-31' 能过 /^\d{4}-\d{2}-\d{2}$/，但 2 月没有 31 号。
+  // 改之前它被拼进 URL 发给数据库，数据库 CHAR(10) 照单全收，
+  // 于是「查一个不存在的日子」返回 200 + 空数组 —— 跟「这天真的没待办」长得一模一样。
+  // 那是最难查的一类错：数据没丢，前端也不报错，只是某天清单永远是空的。
+  // 现在跟 POST/PATCH 一样走 isRealDate，挡在发请求之前。
   var date = (q.date == null) ? '' : String(q.date);
   var dateStr = String(date);
-  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return withHttp(400, fail('BAD_REQUEST', 'date 必须是 YYYY-MM-DD，收到 "' + date + '"'), event);
+  if (date && !isRealDate(dateStr)) {
+    // 格式不对和「日子不存在」分开说：前者是打错了，后者是打对了但不存在，
+    // 用户改的方式不一样（改格式 vs 换一个真实存在的日子）。
+    var fmtBad = !/^\d{4}-\d{2}-\d{2}$/.test(dateStr);
+    return withHttp(400, fail('BAD_REQUEST',
+      fmtBad
+        ? 'date 必须是 YYYY-MM-DD，收到 "' + date + '"'
+        : 'date 格式对，但不是个真实存在的日子，收到 "' + date + '"（2026 年 2 月没有 31 号这样的日期）。'),
+      event);
   }
 
   var lim = toLimit(q.limit);
   if (lim.error) return withHttp(400, fail('BAD_REQUEST', lim.error), event);
+
+  // Day 23：跟 reminders 侧同一条改动 —— 不认识的查询参数要说出来，不能当没看见。
+  //   `?titel=xxx`（拼错了）以前会被静默忽略，调用方拿到 200 + 全量数据，
+  //   以为筛过了其实没筛。这类错不产生任何错误信号，最难查。
+  //   只在**只传了一个陌生键**时报错（多键混传时放行，避免网关塞的参数把正常请求打死）。
+  //
+  //   `id` 在白名单里：它是 Day 22 特意留的兜底通道 —— 路径 /api/items/{id}
+  //   依赖网关的「路径透传」开关，万一哪天开关被关了，还有 ?id= 这条路能通。
+  //   容错通道不能被安全检查误伤。
+  var KNOWN_Q = ['date', 'limit', 'id'];
+  var qkeys = Object.keys(q);
+  if (qkeys.length === 1 && KNOWN_Q.indexOf(qkeys[0]) < 0) {
+    return withHttp(400, fail('BAD_REQUEST',
+      '不认识的查询参数 "' + qkeys[0] + '"。这个接口只认：date、limit、id（都可以不传）；要按某一条查请用路径 /api/items/{id}。'),
+      event);
+  }
 
   // ★ 只调 repository —— 查询串怎么拼、凭据从哪来，它自己知道。
   var rows = await repo.list({ id: id, date: dateStr, limit: lim.value });
@@ -556,7 +675,10 @@ async function handlePatch(event, startedAt) {
   }
   if (r.status < 200 || r.status >= 300) {
     log({ m: 'PATCH', id: id, st: 'upstream', up: r.status, ms: Date.now() - startedAt });
-    return withHttp(502, fail('UPSTREAM', 'PG REST 返回 ' + r.status + '：' + r.text.slice(0, 300)), event);
+    // Day 23：原文不再拼给人（改前是 'PG REST 返回 ' + r.status + '：' + r.text）。
+    // 原文留进日志，人话走 humanUpstream。
+    log({ m: 'PATCH', id: id, st: 'upstream_detail', up: r.status, raw: String(r.text).slice(0, 300) });
+    return withHttp(502, fail('UPSTREAM', humanUpstream(new Error('PG REST 返回 ' + r.status + '：' + r.text))), event);
   }
 
   if (!r.parsed) {
@@ -623,7 +745,9 @@ async function handleDelete(event, startedAt) {
   }
   if (r.status < 200 || r.status >= 300) {
     log({ m: 'DELETE', id: id, st: 'upstream', up: r.status, ms: Date.now() - startedAt });
-    return withHttp(502, fail('UPSTREAM', 'PG REST 返回 ' + r.status + '：' + r.text.slice(0, 300)), event);
+    // Day 23：同上，DELETE 分支的原文也不进响应。
+    log({ m: 'DELETE', id: id, st: 'upstream_detail', up: r.status, raw: String(r.text).slice(0, 300) });
+    return withHttp(502, fail('UPSTREAM', humanUpstream(new Error('PG REST 返回 ' + r.status + '：' + r.text))), event);
   }
 
   // PostgREST 带 return=representation 时 DELETE 也回读被删掉的那行。
@@ -649,7 +773,26 @@ async function handleDelete(event, startedAt) {
 
 // ⑮ 入口。
 exports.main = async function (event) {
-  var method = (event && event.httpMethod) || 'GET';
+  //Day 23 审计改的一行。之前是 `var method = (event && event.httpMethod) || 'GET'`，
+  // 也就是**event整个是 null、或者 event 存在但没有 httpMethod 字段，都默默按 GET 处理**。
+  //
+  // 为什么这比看起来严重：默认成 GET 意味着「连请求方法都没有」这种彻底坏掉的调用，
+  // 会拿到一份 200 + 数据。看起来像成功，实际是网关配置错了或者 event 结构变了。
+  // 而这类错误的正确表现是**响亮地失败**—— 少了信息就报缺信息，别猜。
+  //
+  // 保留一个小口子：httpMethod 为空字符串 / null 时仍按 GET 处理。
+  // 因为确实有网关在某些配置下不带这个字段（那是合法的「没说是啥方法」）；
+  // 但 event 连对象都不是，那是上游出错了，不能装作没事。
+  var method = '';
+  if (event && typeof event === 'object' && event.httpMethod != null) {
+    method = String(event.httpMethod).toUpperCase();
+  } else if (event && typeof event === 'object') {
+    method = 'GET';
+  } else {
+    return withHttp(400, fail('BAD_REQUEST',
+      '服务端收到空的请求（event 不是对象），无法判断要做什么。这是网关或调用方的问题，不是你的操作。'),
+      event);
+  }
   var startedAt = Date.now();
 
   // 浏览器跨域发 POST 之前会先发 OPTIONS 探路（问「这个方法、这个头允许吗」）。
@@ -676,9 +819,7 @@ exports.main = async function (event) {
     // 先查凭据，缺了就直接说缺哪个 —— 别等到请求发出去报 401 才猜。
     if (!repo.hasCredential()) {
       var hint = repo.credentialHint();
-      return withHttp(500, fail('CONFIG_MISSING',
-        '云函数拿不到 API Key。请在函数配置里开启 API Key，或手动加环境变量 ' +
-        hint.vars.join(' / ') + '。当前可见的相关变量名：' + hint.visible), event);
+      return withHttp(500, fail('CONFIG_MISSING', humanConfig(hint)), event);
     }
 
     if (method === 'POST') return await handlePost(event, startedAt);
@@ -687,6 +828,8 @@ exports.main = async function (event) {
     return await handleGet(event, startedAt);
   } catch (e) {
     log({ m: method, st: 'error', ms: Date.now() - startedAt });
-    return withHttp(500, fail('UPSTREAM', String((e && e.message) || e)), event);
+    // Day 23：不再把 e.message 直接吐给用户（那是一句英文裸报错）。
+    // 原文挪进 log({ err })，人话走 humanUpstream。
+    return withHttp(500, fail('UPSTREAM', humanUpstream(e)), event);
   }
 };

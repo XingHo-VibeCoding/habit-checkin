@@ -3,6 +3,42 @@
 .env.*
 !.env.example
 
+# ── Day 23 审计补的：密钥文件的其它常见名字 ──
+# 为什么要补这一段：上面三条只挡了 .env 一种写法。实测（造假文件 + git check-ignore -v）
+# 下面这些**全都不被挡**，也就是说「哪天顺手把私钥放成id_rsa 或者把 API Key 写进
+# secrets.json，git add . 一下就进仓库了」。
+# .env 规则挡的是**文件名**，不是**内容**——所以只能靠把常见的密钥文件名都列出来。
+#
+# ⚠️ 这段规则永远不可能穷尽（文件名可以随便起）。真正的兜底是那条纪律：
+# **任何密钥都不写进文件，只写进控制台的环境变量。**
+# 规则只是「手滑时的护栏」，不是「可以安全地把密钥写进文件」的许可证。
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.npmrc
+.netrc
+secrets.json
+secrets.yaml
+secrets.yml
+credentials.json
+*.credentials
+
+# 编辑器临时文件（里面经常带未保存的配置片段，gitignore 的老传统）
+*.swp
+*.swo
+*.swn
+*.tmp
+*.bak
+*.orig
+*~
+
 # 依赖
 node_modules/
 .pnp

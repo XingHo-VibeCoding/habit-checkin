@@ -9,7 +9,7 @@
 //    为什么：health 的返回值要能一眼看出「我打的是哪个环境、哪一版」。
 //    环境搞混、改完没生效，是部署阶段最常见两类事故，这两个字段是它们的探针。
 var SERVICE = 'habit-checkin';
-var VERSION = 'day20';
+var VERSION = 'day23';
 
 // ---------- CORS 白名单（Day 20）----------
 // 与 items / reminders 里那份逻辑完全相同，理由见withHttp 的注释。
@@ -73,7 +73,20 @@ exports.main = async function (event, context) {
     // ⑥ 兜底。health 本身不该抛异常，但真抛了也不能让调用方拿到一个裸的 502 ——
     //    那样前端只能显示「请求失败」，看不出是环境没起来还是代码错了。
     //    转成契约里的 INTERNAL，消息带上原始报错。
-    return withHttp(500, fail('INTERNAL', String((e && e.message) || e)), event);
+    //
+    // Day 23：**改前** `fail('INTERNAL', String(e.message))`
+    //   → 用户看到 `Cannot read property 'x' of undefined` 这类 JS 内部错误
+    //   **改后** 说人话，并明说「这是代码的问题，请联系开发」。
+    //
+    // health 特殊在它是**探测端点** —— 前端每次打开都调它。
+    // 所以措辞要让「是不是我这边的问题」一眼可辨：不是，是服务端。
+    //
+    // ⚠️ 原文必须留（哪怕只是 console.log）—— 否则线上出问题时，
+    //    用户看懂了「请联系开发」，而开发什么都查不到，那等于把线索丢了。
+    try { console.log('[health] INTERNAL detail:', (e && e.stack) || e); } catch (_) {}
+    return withHttp(500, fail('INTERNAL',
+      '健康检查没通过：服务器内部出了点问题。这不是你的操作导致的，请稍后重试；' +
+      '如果一直失败，请联系开发。'), event);
   }
 };
 
