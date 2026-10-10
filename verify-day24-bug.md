@@ -240,9 +240,40 @@ function undoRemove() {
 
 ---
 
+## 最终回归（提交时点的完整状态）
+
+| 项 | 结果 |
+|---|---|
+| 提交 | `069503f`「Day 24｜修好快速连点删除只保留最后一次撤销，并留全四步证据」 |
+| 推送 | `ab14eee..069503f  main -> main`，**三道核验一致**（本地 HEAD = `ls-remote` = GitHub API） |
+| 线上发布 | https://daily-checkin-list.app.workbuddy.host/ ；curl 核验 `pendingUndo.push` 2 处、`pushToDb` 6 处、`mascot.png` 200 |
+| 工作区 | 干净（无未提交改动） |
+
+全部测试脚本复跑（提交后）：
+
+```
+cloudfunctions/test_logic.js         386 通过 / 0 失败
+cloudfunctions/audit_day23_input.js  62 条非法输入，合格 62，有问题 0
+test_day24_write.js18 通过 / 0 失败
+test_day24_sync.js                    7 通过 / 0 失败
+test_day24_bug_fixed.js20 通过 / 0 失败
+```
+
+---
+
 ## 截图要求对照
 
 | 要求 | 状态 |
 |---|---|
-| 截图一：F12 控制台里的报错原文 | 待用户手机真机截|
-| 截图二：修复后正常运行（带地址栏或正常返回） | 待用户手机真机截 |
+| 截图一：复现证据 —— 撤销条显示「已删除「甲」等 **2** 条」 | 待用户手机真机截 |
+| 截图二：修复后 —— 点一次撤销两条都回来，带地址栏 | 待用户手机真机截 |
+| （补充）F12 Network 里两条 `POST /api/items` | 待用户手机真机截 |
+
+> ⚠️ **本Bug 是静默失败**：用户界面上不会出现任何红色报错，
+> 所以「F12 控制台报错原文」这一项在本Bug 上**没有对应物**。
+> 等价物是 F12 → Network 里的请求序列 ——
+> **修复前是`DELETE ×2 + POST ×1`（删两条只回来一条），
+> 修复后是 `DELETE ×2 + POST ×2`**。这才是这个 bug 的原始证据。
+>
+> 另外这个 bug 之所以能在 Day 11 到Day 24 里藏这么久，
+> 正是因为它不报错 —— 没有任何错误信号，只有「数据悄悄少了一条」。
