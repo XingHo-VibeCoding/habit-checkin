@@ -695,6 +695,63 @@
       transform: translate(-50%, 0);
     }
     .undo-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ---------- Day 24：同步失败提示（和撤销条同一个位置，不同的严重程度） ---------- */
+    /* 为什么复用 .undo 的样式而不是另起一套：两者都是「盖在界面之上的临时反馈」，
+       长得一样才像是同一个系统在说话。区别只在颜色和按钮文案 ——
+       撤销条是「这步可以反悔」（中性），失败条是「数据没存上」（警示）。
+       ⚠️ 位置刻意错开（bottom 从 20px 抬到 72px）：两者可能同时出现
+       （刚删完就同步失败），重叠会让人分不清按的是哪个按钮。 */
+    .syncfail {
+      position: fixed;
+      left: 50%;
+      bottom: 72px;
+      z-index: 21;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      width: max-content;
+      max-width: calc(100vw - 32px);
+      padding: 10px 10px 10px 16px;
+      border-radius: var(--radius-sm);
+      background: var(--ink);
+      color: #ffffff;
+      box-shadow: var(--shadow-2);
+      font-size: 13px;
+      letter-spacing: 0.03em;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translate(-50%, 12px);
+      transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
+    }
+    .syncfail.show {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: translate(-50%, 0);
+    }
+    .syncfail-text { min-width: 0; }
+    /* 「重试」按钮：主操作，用旧金 —— 它是这层里唯一该被点的那一个 */
+    .syncfail-btn {
+      flex: 0 0 auto;
+      appearance: none;
+      border: 1px solid rgba(212, 175, 55, 0.5);
+      background: rgba(212, 175, 55, 0.16);
+      color: #f0d98c;
+      font: inherit;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      padding: 5px 11px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .syncfail-btn:hover { background: rgba(212, 175, 55, 0.26); }
+    .syncfail-btn:focus-visible { outline: 2px solid #f0d98c; outline-offset: 2px; }
+    .syncfail-btn[disabled] { opacity: 0.5; cursor: default; }
+    @media (prefers-reduced-motion: reduce) {
+      .syncfail { transition: none; transform: translate(-50%, 0); }
+    }
     .undo-btn {
       flex: none;
       min-height: 36px;                 /* 浮层总高限制下的折衷；宽的那一维够手指落 */
@@ -981,6 +1038,17 @@
   <div class="undo" id="undoBar" role="status" aria-live="polite" aria-hidden="true">
     <span class="undo-text" id="undoText"></span>
     <button class="undo-btn" id="undoBtn" type="button">撤销</button>
+  </div>
+
+  <!-- Day 24：写入数据库失败的提示 + 重试。
+       为什么单独一条而不是复用撤销条：撤销说「这步可以反悔」，
+       这条说「数据没存上」—— 后者必须一直挂着直到成功或用户放弃，
+       不能像撤销条那样2.6 秒后自己消失（消失了用户就以为存上了）。
+       role="alert" 而不是 status：这是需要打断的坏消息，不是进度播报。 -->
+  <div class="syncfail" id="syncFailBar" role="alert" aria-hidden="true">
+    <span class="syncfail-text" id="syncFailText"></span>
+    <button class="syncfail-btn" id="syncRetryBtn" type="button">重试</button>
+    <button class="syncfail-btn" id="syncDismissBtn" type="button">知道了</button>
   </div>
 
   <!-- Day 22：删除二次确认弹层。
@@ -1409,6 +1477,191 @@
           '要让云函数 ALLOWED_ORIGINS 包含当前地址栏的域名' +
           '（注意 localhost 和 127.0.0.1 是两个不同的源）。'
         );
+      });
+    }
+
+    // ---------- 写入层（Day 24）----------
+    //
+    // 【为什么要有这一层，而不是在三个动作里各写一次 fetch】
+    // Day 21 查出来的核心问题不是「没调接口」，而是**三个动作各调各的**就会出三份
+    // 错误处理 —— 而错误处理恰恰是最容易漏、最难测的部分。
+    // 收在一处之后：「失败要不要回滚」「怎么重试」「错误怎么翻译给人看」
+    // 只可能有一种实现，改一处就全改对。
+    //
+    // 【失败不回滚，是拍板决定】
+    // 用户点了勾选，界面立刻变勾上了；这时接口失败。
+    //   · 回滚 → 用户以为没点上，可能又点一下，反而更乱
+    //   · 不回滚 → 界面和数据库暂时不一致，但用户看到「没存上」+ 能重试
+    // 选后者。代价是「短时间内两边可能不一样」，换来的是「用户永远知道自己该干什么」。
+
+    // 写请求的统一入口。返回 Promise，**永远 resolve，不 reject** ——
+    // 因为调用方（用户动作）不该因为网络问题而中断，本地状态已经改了。
+    // 成败用返回的 { ok: bool, msg: string } 表达。
+    function apiSend(method, path, body) {
+      var opts = {
+        method: method,
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' }
+      };
+      if (body !== undefined && body !== null) opts.body = JSON.stringify(body);
+
+      return fetch(API_BASE + path, opts).then(function (r) {
+        return r.text().then(function (txt) {
+          var json = null;
+          try { json = JSON.parse(txt); } catch (e) { /* 不是 JSON，下面按状态码说 */ }
+          if (json && json.ok === true) return { ok: true, data: json.data };
+          // 拿到了 JSON 但 ok:false —— 服务端的问题，中文错误已经在 error.message 里
+          if (json && json.error) {
+            return { ok: false, code: json.error.code, msg: json.error.message };
+          }
+          // 没拿到 JSON：多半被网关/代理拦了，不在函数这一层
+          return {
+            ok: false,
+            code: 'NOT_JSON',
+            msg: '接口返回的不是 JSON（HTTP ' + r.status + '）—— 通常是网关或代理拦了。'
+          };
+        });
+      }, function (networkErr) {
+        // fetch 本身失败：断网、CORS 被拒、DNS 解析不了……
+        // 这类错误一个字响应都没拿到，跟「服务端回了错」排查方向完全不同。
+        return {
+          ok: false,
+          code: 'NETWORK',
+          msg: '连不上服务器（' + (networkErr && networkErr.name ? networkErr.name : '网络错误') + '）。检查一下网络；' +
+               '如果 DevTools 里那条请求标红写着 CORS，就是跨域被拒了。'
+        };
+      });
+    }
+
+    // 前端字段 → 数据库列（写方向的映射，跟 mapItem 反着来）。
+    //
+    // ⚠️ done 必须转成 **1/0 而不是 true/false**：
+    //   库里 done 是 SMALLINT，契约里就写着「done 只认 0/1，不认 boolean」。
+    //   发 true 过去会撞类型约束被拒回来，而报错特别难懂（invalid input syntax）。
+    function toDbItem(it) {
+      return {
+        id: it.id,
+        title: it.title,
+        plan_date: it.date,
+        done: it.done ? 1 : 0,
+        created_at: it.createdAt ? new Date(it.createdAt).toISOString() : new Date().toISOString(),
+        done_at: it.doneAt ? new Date(it.doneAt).toISOString() : null
+      };
+    }
+
+    // 失败队列 + 提示条。
+    //
+    // 为什么是「队列」不是「只记最后一次」：连续点三下勾选可能失败两次，
+    // 只留最后一个就等于把前两次的失败悄悄吞掉了 —— 用户以为都存上了。
+    // 所以全部排着，逐条重试，用户能看见还剩几条。
+    var syncQueue = [];
+    var syncBusy = false;
+
+    function showSyncFail() {
+      var bar = document.getElementById('syncFailBar');
+      var text = document.getElementById('syncFailText');
+      var retry = document.getElementById('syncRetryBtn');
+      if (!syncQueue.length) {
+        bar.classList.remove('show');
+        bar.setAttribute('aria-hidden', 'true');
+        return;
+      }
+      text.textContent = syncQueue.length === 1
+        ? '这次没存上：' + syncQueue[0].msg
+        : '有 ' + syncQueue.length + ' 次没存上（最新的：' + syncQueue[0].msg + '）';
+      retry.disabled = false;
+      retry.textContent = '重试' + (syncQueue.length > 1 ? '全部' : '');
+      bar.classList.add('show');
+      bar.setAttribute('aria-hidden', 'false');
+    }
+
+    // 失败进队列，并自动重放一次。
+    //
+    // ⚠️ 为什么「失败后自动重试一次」而不是干等用户点：
+    //   绝大多数「失败」是瞬时的（切了一下网络、地铁里一格信号）。
+    //   自动重试一次就成功的话，用户根本不用被打扰；真的重试也失败，
+    //   才值得拿一条浮条去打扰他。
+    function enqueueAndRetry(job, result) {
+      syncQueue.push({ job: job, msg: result.msg });
+      showSyncFail();
+      drainQueue();
+    }
+
+    function drainQueue() {
+      if (syncBusy || !syncQueue.length) return;
+      syncBusy = true;
+      var entry = syncQueue[0];
+      document.getElementById('syncRetryBtn').disabled = true;
+
+      entry.job().then(function (res) {
+        syncBusy = false;
+        document.getElementById('syncRetryBtn').disabled = false;
+        if (res.ok) {
+          // 这条存上了，弹走它，接着试下一条
+          syncQueue.shift();
+          showSyncFail();
+          drainQueue();
+        } else {
+          showSyncFail();       // 留在队列里，等用户再点
+        }
+      });
+    }
+
+    document.getElementById('syncRetryBtn').addEventListener('click', function () {
+      drainQueue();
+    });
+    document.getElementById('syncDismissBtn').addEventListener('click', function () {
+      // 「知道了」= 用户放弃这次同步。
+      //
+      // 数据留在 localStorage；下次打开页面 fetchState() 拿的是数据库那份，
+      // 那时他会看到差异（刚才没存上的那几条不在了）。
+      // 这不是完美结局，但比反复弹一条他救不回来的错更烦人。
+      syncQueue = [];
+      syncBusy = false;
+      showSyncFail();
+    });
+
+    // 三个动作各自要提交什么。这里定义，因为重试时需要**原样重放同一个请求**。
+    var syncJobs = {
+      add: function (it) {
+        return function () { return apiSend('POST', '/items', toDbItem(it)); };
+      },
+      toggle: function (id, done, doneAt) {
+        return function () {
+          return apiSend('PATCH', '/items/' + encodeURIComponent(id), {
+            done: done ? 1 : 0,
+            done_at: doneAt ? new Date(doneAt).toISOString() : null
+          });
+        };
+      },
+      remove: function (id) {
+        return function () { return apiSend('DELETE', '/items/' + encodeURIComponent(id)); };
+      }
+    };
+
+    // 提交一次写入。
+    //
+    //【为什么不写成 pushToDb(job, result)】
+    //   最初写成了「调用方先拿到 result 再传进来」，
+    //   但 result 只有在请求发出之后才有 —— 那时 job 早就建好了，
+    //   两个参数在时间上是错开的，读代码的人一定会卡住。
+    // → 改成：job 建好就直接发，成功什么都不做，
+    //   失败自动进队列并重试一次。调用方一行都不用管。
+    //
+    // 【ignoreCodes：某些错误码其实代表「已经是你想要的样子」，不该打扰用户】
+    //   唯一用到的地方是撤销删除后重新 POST —— 如果那条 DELETE 其实没发出去，
+    //   云端那条记录一直都在，重新 POST 同 id 会撞 409。
+    //   而 409 在这里的意思恰恰是「它还在」，正是撤销想要的结果。
+    //   不特殊处理的话，用户会看到一条「没存上：id 已经在清单里了」——
+    //   一个**误报**，而且是在用户刚做完正确操作之后立刻出现，最劝退。
+    //   （这个场景是真打出来的，不是推演：见 verify-day24-public.md）
+    function pushToDb(job, ignoreCodes) {
+      var ignore = ignoreCodes || [];
+      job().then(function (res) {
+        if (!res) return;
+        if (res.ok === true) return;                       // 存上了，没事
+        if (res.code && ignore.indexOf(res.code) >= 0) return;   // 已经是想要的样子
+        enqueueAndRetry(job, res);                        // 真失败了：排队 + 自动重试
       });
     }
 
@@ -2110,11 +2363,11 @@
       var index = -1;
       state.anniv.forEach(function (a, n) { if (a.id === id) index = n; });
       if (index < 0) return;
-      pendingUndo = { kind: 'anniv', item: state.anniv[index], index: index };
+      pendingUndo.push({ kind: 'anniv', item: state.anniv[index], index: index });
       state.anniv.splice(index, 1);
       save();
       render();
-      showUndo('已删除纪念日「' + pendingUndo.item.title + '」');
+      showUndo();
     }
 
     function hhmmToMin(hhmm) {
@@ -2222,14 +2475,29 @@
     }
 
     function toggleItem(id) {
+      // Day 24：先记下改完之后的样子，再改本地、再发请求。
+      //
+      // 【为什么要在 forEach 外面先取值】
+      // PATCH 的 body 是按「改完之后应该是什么」构造的，不是按「之前是什么」。
+      // 所以得先真的改完 state，再从 state 里读出来 —— 反过来做（先读旧值再改）
+      // 会发出一个「把状态改回去」的请求，症状是勾了又自己弹回来。
+      var after = null;
       state.items.forEach(function (i) {
         if (i.id === id) {
           i.done = !i.done;
           i.doneAt = i.done ? new Date().toISOString() : null;
+          after = { done: i.done, doneAt: i.doneAt };
         }
       });
+      if (!after) return;                       // id 不在库里（不该发生），别发请求
       save();
       render();
+
+      // 发 PATCH。失败会自动进队列并重试，调用方不用管。
+      // ⚠️ 本地新建的项在 POST 成功前云端还没有 —— 那时 PATCH 会回 404，
+      //   重试也救不回来，会留下一条「没存上」。这是可接受的噪声：
+      //   真正要修的是「新增那次 POST 失败了」，那条提示会指向正确的地方。
+      pushToDb(syncJobs.toggle(id, after.done, after.doneAt));
     }
 
     // Day 22：删除改为「先确认，再删」。
@@ -2292,47 +2560,117 @@
       if (index < 0) return;
       // 删之前先记住「删的是谁、它原本排第几」——撤销要放回原位，不是补到末尾。
       // kind 标明是哪种数组，撤销时才知道该插回哪里（清单项和纪念日是两套数组）
-      pendingUndo = { kind: 'item', item: state.items[index], index: index };
+      var record = { kind: 'item', item: state.items[index], index: index };
+      var removedId = state.items[index].id;
       state.items.splice(index, 1);
+      pendingUndo.push(record);         // Day 24：入队，不再覆盖（原因见 undoRemove 注释）
       save();
       render();
-      showUndo('已删除「' + pendingUndo.item.title + '」');
+      showUndo();
+
+      // Day 24：发 DELETE。
+      //
+      // ⚠️ 故意**不加 ?force=1**：那是「删不掉也当成功」的幂等删除。
+      //   这里要的就是「删不掉就说删不掉」—— 万一 id 其实还在，
+      //   报404 才能让人知道云端和本地又对不上了。谎报成功只会把这个差异埋掉。
+      pushToDb(syncJobs.remove(removedId));
     }
 
     // ---------- 撤销条：反馈层③「可以反悔」 ----------
     // 删除是这个页面上唯一没法回头的操作。Day 10 把整行改成可点之后，手指落在行里时
     // ✕ 就在手边，误触概率反而高了 —— 退路必须补上，不然每次点错都是真的丢一条。
     var UNDO_MS = 2600;                 // 撤销条的停留时长（原 4000，实测嫌长；再短会来不及点）
-    var pendingUndo = null;             // { kind, item, index }：一次只挂一笔，删新的会顶掉旧的
+
+    // Day 24：pendingUndo 从**单值改成队列**（原来是 null，一次只挂一笔）。
+    //
+    // ── 原来的 bug（今天定位并复现的）──
+    //   快速连点删两条时，第二次删除会把 pendingUndo 覆盖掉，
+    //   于是点一次撤销只救回**最后删的那条**，
+    //   而**先删的那条既撤不回来、也没别的办法找回**。
+    //
+    // ── 为什么在 Day 11 时代可以忍，现在不能 ──
+    //   Day 11 纯本地：顶掉顶多丢一条，重新打一遍字就回来了。
+    //   Day 24 接了数据库：那两条 DELETE **已经真的发出去了**，
+    //   撤销只把一条插回本地（再 POST 一次），**另一条在数据库里是真没了**。
+    //   同一个老问题，被新的写入能力放大成了不可逆的数据丢失。
+    //
+    // ── 为什么不能「干脆不给撤销」──
+    //   删除是本页唯一不可逆的操作。Day 22 已经在动手前加了二次确认弹层，
+    //   但确认弹层拦的是「误触」，拦不住「手快连点」。
+    //   退路还得留着，只是得能覆盖**多次**删除。
+    var pendingUndo = [];               // [{ kind, item, index }] 从旧到新，末尾是最近一次
+
+    // 连删了几笔 —— 撤销条上要写出来（"已删除 X" → "已删除 X 等 2 条"）。
     var undoTimer = null;
 
     var undoBar = document.getElementById('undoBar');
     var undoText = document.getElementById('undoText');
     var undoBtn = document.getElementById('undoBtn');
 
+    // 撤销条。Day 24：一次删多条时，文案要跟着变（「已删除 X」→「已删除 X 等 2 条」）。
+    //
+    // ⚠️ 为什么文案取**最老**那条（pendingUndo[0]）而不是最近的：
+    //   撤销的语义是「把刚才删的都还回来」，那批里最早删的那条最具代表性。
+    //   取最近的会显得像「刚才只删了它一条」，反而误导。
     function showUndo(msg) {
-      undoText.textContent = msg;
+      undoText.textContent = msg || defaultUndoMsg();
       undoBar.classList.add('show');
       undoBar.setAttribute('aria-hidden', 'false');
       clearTimeout(undoTimer);
       undoTimer = setTimeout(hideUndo, UNDO_MS);
     }
 
+    function defaultUndoMsg() {
+      if (!pendingUndo.length) return '';
+      var head = pendingUndo[0].item.title;
+      var noun = pendingUndo[0].kind === 'anniv' ? '纪念日' : '';
+      if (pendingUndo.length === 1) return '已删除' + noun + '「' + head + '」';
+      return '已删除' + noun + '「' + head + '」等 ' + pendingUndo.length + ' 条';
+    }
+
     function hideUndo() {
       clearTimeout(undoTimer);
       undoTimer = null;
-      pendingUndo = null;               // 过期作废：原件已经丢掉，再也回不来了
+      pendingUndo = [];                 // 过期作废：原件已经丢掉，再也回不来了
       undoBar.classList.remove('show');
       undoBar.setAttribute('aria-hidden', 'true');
     }
 
     function undoRemove() {
-      if (!pendingUndo) return;
-      var p = pendingUndo;
-      hideUndo();                       // 机会用掉了，顺手把计时器和浮层收干净
-      // 清单项和纪念日各存各的数组，按 kind 决定插回哪一支
-      var arr = p.kind === 'anniv' ? state.anniv : state.items;
-      arr.splice(Math.min(p.index, arr.length), 0, p.item);
+      // Day 24 修复：pendingUndo 已经是**队列**了，这里要整批还，而不是只还最后一笔。
+      if (!pendingUndo.length) return;
+      var batch = pendingUndo.slice();   // 先复制：hideUndo() 会把原数组清空
+      hideUndo();                // 机会用掉了，顺手把计时器和浮层收干净
+
+      // ⚠️ 必须**倒序**还（batch 从新到旧遍历）：
+      //   每条记录里的 index 是「它被删掉那一刻的下标」。
+      //   假设原列表 [a,b,c]，删a（index 0）再删 b（此时 index 0）。
+      //   如果正序插回：先插 a 到 0 → [a,b,c]，再插 b 到 0 → [b,a,c]，b跑到了 a 前面，顺序乱了。
+      //   倒序：先插 b 到 0 → [b,c]，再插 a 到 0 → [a,b,c]，顺序正确。
+      for (var i = batch.length - 1; i >= 0; i--) {
+        var p = batch[i];
+        // 清单项和纪念日各存各的数组，按 kind 决定插回哪一支
+        var arr = p.kind === 'anniv' ? state.anniv : state.items;
+        arr.splice(Math.min(p.index, arr.length), 0, p.item);
+        // Day 24：撤销删除 = 云端也得把这一条放回去。
+        //
+        // 【为什么是 POST 而不是「撤销那次 DELETE」】
+        // 撤销的语义是「我刚才不该删」，所以云端最终状态应该是「这条还在」——
+        // 而 DELETE 已经被发出去了（或者正在失败队列里），撤销它不是可靠做法。
+        // 重新 POST 同一条才是确定性的。
+        //
+        // ⚠️ 只有 kind==='item' 才要发 —— 纪念日（anniv）后端还没有那张表，
+        //   给它发请求会一直404 然后永远重试。那种「注定失败的重试」最烦人。
+        //
+        // 💡 幂等键在这里第二次派上用场：如果那条 DELETE 其实**发送前就失败了**，
+        //   这个 POST 会撞 409。而 409 在这里的含义恰恰就是「它还在」——
+        //   正是撤销想要的结果。当成失败处理会弹一条
+        //   「没存上：id 已经在清单里了」的**误报**，
+        //   而且是在用户刚做完正确操作之后立刻出现，最劝退。
+        //   （这个场景是真打出来的，见 verify-day24-public.md，不是推演。）
+        if (p.kind === 'item') pushToDb(syncJobs.add(p.item), ['DUPLICATE']);
+      }
+
       save();
       render();
     }
@@ -2340,16 +2678,25 @@
     undoBtn.addEventListener('click', undoRemove);
 
     function addItem(title) {
-      state.items.push({
+      // Day 24：id 在 push 之前就生成好，因为它是**幂等键**——
+      // 契约第 3 条写明「发请求的一方必须持有 id」。
+      // 好处：万一这次 POST 失败、用户点了重试，两次请求带的是同一个 id，
+      // 数据库会拒掉第二次（409），**不会凭空多出两条一模一样的内容**。
+      // 如果让服务端每次现生成 id，手快点两下就是两条不同id 的记录，幂等键形同虚设。
+      var item = {
         id: uid(),
         title: title,
         date: todayStr(),
         done: false,
         createdAt: new Date().toISOString(),
         doneAt: null
-      });
+      };
+      state.items.push(item);
       save();
       render();
+
+      // 新增只有 POST 一条路（不像勾选可以 PATCH）。
+      pushToDb(syncJobs.add(item));
     }
 
     var addInput = document.getElementById('addInput');
