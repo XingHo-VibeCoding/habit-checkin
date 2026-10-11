@@ -14,9 +14,11 @@
 --      别当成日常脚本 —— 真要清数据请显式确认，不要靠副作用。
 -- ---------------------------------------------------------------------------
 --
--- 【两张表分别存什么】
---   items      —— 每日清单条目。今天要勾的那几件事。
---   reminders  —— 提醒。到点要响的那几件事。
+-- 【三张表分别存什么】
+--   items          —— 每日清单条目。今天要勾的那几件事。
+--   reminders      —— 提醒。到点要响的那几件事。
+--   anniversaries  —— 纪念日。生日、认识纪念日这类「每年重复」或「一次性」的日子。
+--     （Day 26 新增。之前 anniv 只活在 localStorage 里，换设备就没了 —— 见 research-anniversary-apps.md）
 --
 -- 【靠哪个字段关联】
 --   reminders.item_id  →  items.id
@@ -26,16 +28,20 @@
 --     定成 NOT NULL 的话，独立提醒这种真实存在的数据就存不进来了
 --     （前端 mock 里的「高铁去上海」「作业截止」本来就是独立提醒）。
 --
--- 【为什么是这两张，不是三张】
---   前端还有 courses（课表）和 anniv（倒数纪念日）。
---   courses 是蓝图占位数据、没有 id、不落 localStorage，不算真数据；
---   anniv 按任务清单的「卡住降级」可延到 Day 18 补。
+-- 【为什么是这三张，不是四张】
+--   前端还有 courses（课表）。它是蓝图占位数据、没有 id、不落 localStorage，不算真数据；
+--   ⚠️ 2026-10-10 已决定**不做课表**（太杂，抬高打开成本，见 decision-drop-timetable.md）。
+--   anniv 原本按「卡住降级」延后，Day 26 补上了 —— 就是上面这张 anniversaries。
 -- ===========================================================================
 
 
 -- 先删子表，再删父表（外键方向决定删除顺序）
 DROP TABLE IF EXISTS reminders;
 DROP TABLE IF EXISTS items;
+
+-- anniversaries 没有外键指向 items，但同样放在这里统一 DROP：
+-- 保持「跑一次 schema.sql 就回到干净状态」这个语义，不给它开后门。
+DROP TABLE IF EXISTS anniversaries;
 
 
 CREATE TABLE items (
@@ -114,12 +120,54 @@ CREATE TABLE reminders (
 
 
 -- ---------------------------------------------------------------------------
--- 索引：这三处是查询会按它筛的字段
+-- anniversaries —— 纪念日（Day 26 新增）
+-- ---------------------------------------------------------------------------
+CREATE TABLE anniversaries (
+  -- 主键 /幂等键。前端 uid()，跟 items 同规矩：发请求的一方必须持有 id，
+  -- 重复提交靠撞主键 → 409 自动分开（详见 cloudfunctions/anniversaries/index.js 注释）。
+  id           VARCHAR(36)  NOT NULL,
+
+  -- 名称。200 是跟 items.title 对齐的上限。
+  title        VARCHAR(200) NOT NULL,
+
+  -- ★ 叫 happen_on 不叫 anniv_date / happen_date，两个原因：
+  --   ① date 在不少 SQL 方言里是关键字，items 已经为这个吃过亏（改名 plan_date）；
+  --   ② 它对**一次性**纪念日是「过去某天」（已经发生），对**每年重复**的才是「起始那天」。
+  --      happen_on 两种都说得通，anniv_date 只对后者成立。
+  --
+  -- 【为什么存完整 YYYY-MM-DD，而不是只存 MM-DD】
+  --   前端要显示「第 N 个」（结婚 5 周年、认识第 26 个生日），那个 N 靠
+  --   annivNext() 里的 yTarget - y0 算出来，y0 就是这里的年份。
+  --   只存 MM-DD 就丢掉了「第一次是哪年」，那个数永远算不出来。
+  --
+  -- 用定长 CHAR 不用 DATETIME：这是「日历上的一天」，没有时区（同 items.plan_date）。
+  happen_on    CHAR(10)     NOT NULL,
+
+  -- 每年重复？1 = 是，0 = 一次性。
+  -- 用 SMALLINT 不用 BOOLEAN：跟 items.done 同一个理由（PostgreSQL 没 TINYINT，
+  -- 三种方言只有 SMALLINT 都认）。
+  yearly       SMALLINT     NOT NULL DEFAULT 0,
+
+  created_at   VARCHAR(32)  NOT NULL,
+
+  PRIMARY KEY (id),
+
+  CONSTRAINT chk_anniversaries_happen_on CHECK (happen_on LIKE '____-__-__'),
+  CONSTRAINT chk_anniversaries_yearly     CHECK (yearly IN (0, 1))
+);
+
+
 -- 因为上面已经 DROP 过表，索引也跟着被删了，所以这几行重复跑不会撞名。
 -- ---------------------------------------------------------------------------
 CREATE INDEX idx_items_plan_date ON items     (plan_date);    -- 「今天」页按日期捞
 CREATE INDEX idx_reminders_at    ON reminders (remind_at);    -- 提醒按时间排序 / 查到期
 CREATE INDEX idx_reminders_item  ON reminders (item_id);      -- 按清单查它挂了哪些提醒
+
+-- Day 26：为什么不建 happen_on 索引？
+--   纪念日表**永远全量读**（没有「今天的纪念日」这种查询 —— 每年重复的日子
+--   下一次可能落在任何一年，要算才知道），而 items 是按 plan_date 筛的。
+--   全量读一张几十行的小表，加索引只会让 INSERT 变慢、让优化器多一个选择。
+--   真到「纪念日多到几万条」那天再补，那是另一个量级的问题。
 
 
 -- ---------------------------------------------------------------------------

@@ -51,8 +51,25 @@ def main():
     conn.executescript(schema_sql)
     tables = [r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
-    check('建表：items / reminders 都存在',
-          set(['items', 'reminders']).issubset(set(tables)), str(tables))
+    # Day 26：三张表（多了 anniversaries）
+    check('建表：items / reminders / anniversaries 都存在',
+          set(['items', 'reminders', 'anniversaries']).issubset(set(tables)), str(tables))
+
+    # ---- 1b. 纪念日的列类型（Day 26）---------------------------------------
+    # 为什么要单独查 information_schema：SQLite 建表成功**不代表类型对**。
+    # 跨方言的真正风险是「SQLite 收下了但 PostgreSQL 拒收」——
+    # 比如 BOOLEAN 在 SQLite 里合法，在 MySQL 里没有真 BOOLEAN。
+    # 这里把关键列的类型打出来，肉眼核对是不是三家都认的类型。
+    anniv_cols = conn.execute(
+        "PRAGMA table_info(anniversaries)").fetchall()
+    col_type = {r[1]: (r[2] or '').upper() for r in anniv_cols}
+    check('anniversaries 列齐全（id/title/happen_on/yearly/created_at）',
+          set(['id', 'title', 'happen_on', 'yearly', 'created_at']).issubset(set(col_type)),
+          str(col_type))
+    check('anniversaries.happen_on 是 CHAR(10)（定长，不是 DATETIME）',
+          'CHAR' in col_type.get('happen_on', ''), col_type.get('happen_on', ''))
+    check('anniversaries.yearly 是 SMALLINT（跨三家方言的代价）',
+          'SMALLINT' in col_type.get('yearly', ''), col_type.get('yearly', ''))
 
     # ---- 2. schema.sql 重复执行不报错（DROP + CREATE 换来的能力） ----------
     # 注意：跑完这一步表是空的（DROP 掉了），所以下面必须重新灌种子
@@ -69,8 +86,49 @@ def main():
     conn.executescript(seed_sql)
     n_items = conn.execute('SELECT COUNT(*) FROM items').fetchone()[0]
     n_rems = conn.execute('SELECT COUNT(*) FROM reminders').fetchone()[0]
+    n_ann = conn.execute('SELECT COUNT(*) FROM anniversaries').fetchone()[0]
     check('items select >= 5 行', n_items >= 5, '实际 %d 行' % n_items)
     check('reminders select >= 5 行', n_rems >= 5, '实际 %d 行' % n_rems)
+    check('anniversaries select >= 3 行', n_ann >= 3, '实际 %d 行' % n_ann)
+
+    # ---- 3b. 两种 yearly 都有（Day 26）-------------------------------------
+    n_yearly = conn.execute(
+        'SELECT COUNT(*) FROM anniversaries WHERE yearly = 1').fetchone()[0]
+    n_once = conn.execute(
+        'SELECT COUNT(*) FROM anniversaries WHERE yearly = 0').fetchone()[0]
+    check('每年重复与一次性两种都有', n_yearly >= 2 and n_once >= 1,
+          'yearly=1 有 %d 条，yearly=0 有 %d 条' % (n_yearly, n_once))
+
+    # ---- 3c. yearly 只能是 0/1（约束真的在拦，不是摆设）-------------------
+    bad_yearly_blocked = False
+    try:
+        conn.execute(
+            "INSERT INTO anniversaries (id, title, happen_on, yearly, created_at) "
+            "VALUES ('bad-yearly', '不该存得下', '2026-01-01', 7, "
+            "'2026-10-10T00:00:00.000Z')")
+    except sqlite3.IntegrityError:
+        bad_yearly_blocked = True
+    check('yearly=7 会被 CHECK 约束拦下', bad_yearly_blocked)
+
+    # ---- 3d. happen_on 格式（Day 26）---------------------------------------
+    bad_date_blocked = False
+    try:
+        conn.execute(
+            "INSERT INTO anniversaries (id, title, happen_on, yearly, created_at) "
+            "VALUES ('bad-date', '格式不对', '2026/01/01', 0, "
+            "'2026-10-10T00:00:00.000Z')")
+    except sqlite3.IntegrityError:
+        bad_date_blocked = True
+    check("happen_on='2026/01/01' 会被 CHECK 拦下", bad_date_blocked)
+
+    # ---- 3e. 每年重复的必须存得住年份（Day 26 关键设计）-------------------
+    # 存完整 YYYY-MM-DD 而不是只存 MM-DD，就是为了前端能算出「第 N 个」。
+    # 如果将来有人图省事改成只存 MM-DD，这条会跟着挂掉 —— 它是那个设计的守卫。
+    row = conn.execute(
+        "SELECT happen_on FROM anniversaries WHERE id = 'seed-anniv-02'").fetchone()
+    check('每年重复的记录存的是完整日期（年份在，第 N 个才算得出来）',
+          row is not None and len(row[0]) == 10 and row[0][4] == '-',
+          'happen_on = %s' % (row[0] if row else '(读不到)'))
 
     # ---- 4. seed.sql 重复执行不报错 ---------------------------------------
     try:
@@ -82,10 +140,12 @@ def main():
         err = '%s: %s' % (type(e).__name__, e)
     n_items2 = conn.execute('SELECT COUNT(*) FROM items').fetchone()[0]
     n_rems2 = conn.execute('SELECT COUNT(*) FROM reminders').fetchone()[0]
+    n_ann2 = conn.execute('SELECT COUNT(*) FROM anniversaries').fetchone()[0]
     check('seed.sql 重复执行不报错', ok, err)
     check('重复执行后行数不变（真幂等，不是「没报错但翻倍」）',
-          n_items2 == n_items and n_rems2 == n_rems,
-          'items %d->%d, reminders %d->%d' % (n_items, n_items2, n_rems, n_rems2))
+          n_items2 == n_items and n_rems2 == n_rems and n_ann2 == n_ann,
+          'items %d->%d, reminders %d->%d, anniversaries %d->%d'
+          % (n_items, n_items2, n_rems, n_rems2, n_ann, n_ann2))
 
     # ---- 5. 关联：JOIN 查得出挂着的提醒 -----------------------------------
     joined = conn.execute(

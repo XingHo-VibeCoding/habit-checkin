@@ -1128,7 +1128,7 @@
     //外加「最后更新时间」—— 这里的时刻取**响应头 Date**，不是 new Date()。
     // 区别很实在：new Date() 只能证明「我这台机器的钟是准的」，
     // 而 Date 响应头能证明「我拿到的是服务器刚生成的响应」，顺带能发现 CDN 给了旧缓存。
-    var diagState = { when: null, health: null, items: null, reminders: null, lastErr: '' };
+    var diagState = { when: null, health: null, items: null, reminders: null, anniv: null, lastErr: '' };
 
     function diagTime(s) {
       var d = new Date(s);
@@ -1196,7 +1196,13 @@
 
       // ---- ② 核心表真实数据 ----
       h += '<div class="diag-sec"><div class="diag-t">② 核心表真实数据</div>';
-      [['items', s.items, '清单'], ['reminders', s.reminders, '提醒']].forEach(function (t) {
+      // Day 26 加了 anniversaries 一行。
+      // 为什么它必须出现在检查台里：这个函数是**新建的**，部署最容易出半成品
+      // （函数传了但路由没建 / 环境变量没配 / ALLOWED_ORIGINS 没加）。
+      // 那时页面表现是「纪念日永远是空的」，而 items 一切正常 ——
+      // 没有这一行，得靠猜「到底是接口没通还是真没数据」。
+      [['items', s.items, '清单'], ['reminders', s.reminders, '提醒'],
+       ['anniversaries', s.anniv, '纪念日']].forEach(function (t) {
         var key = t[0], r = t[1];
         if (!r) { h += diagRow(t[2], '还没检查', 'mut'); return; }
         var rows = r.json && r.json.ok ? (r.json.data || []) : null;
@@ -1216,9 +1222,24 @@
       if (s.lastErr) {
         h += '<div class="diag-row"><span class="k">降级原因</span><span class="v bad">' + esc(s.lastErr) + '</span></div>';
       } else if (state && state._remote) {
+        // ⚠️ 判据是**三个**接口全通，不是两个（Day 26 加了 /anniversaries）。
+        //   只看 items && reminders 的话，纪念日接口挂了页面会照样显示
+        //   「数据库（接口全通）」—— 而实际上纪念日是空的。
+        //   一句「全通」谎报出去，排查就会从错误的目录开始 —— 这跟 Day 24
+        //   「删除谎报成功」是同一类错：报错让人去查，谎报让人往下走。
         h += diagRow('页面数据来源',
-          state._remote.items && state._remote.reminders ? '数据库（接口全通）'
+          (state._remote.items && state._remote.reminders && state._remote.anniv)
+            ? '数据库（接口全通）'
             : '部分数据库 + 部分本地兜底', 'mut');
+        // 哪个接口降级的，逐个点名 —— 「部分兜底」这句话本身没用，
+        // 得知道是哪一块才查得下去。
+        if (!(state._remote.items && state._remote.reminders && state._remote.anniv)) {
+          var fell = [];
+          if (!state._remote.items) fell.push('items' + (state._remote.itemsErr ? '（' + state._remote.itemsErr + '）' : ''));
+          if (!state._remote.reminders) fell.push('reminders' + (state._remote.remindersErr ? '（' + state._remote.remindersErr + '）' : ''));
+          if (!state._remote.anniv) fell.push('anniversaries' + (state._remote.annivErr ? '（' + state._remote.annivErr + '）' : ''));
+          if (fell.length) h += diagRow('哪些退回本地', fell.join('；'), 'bad');
+        }
       }
       h += '</div>';
 
@@ -1244,22 +1265,25 @@
     }
 
     function refreshDiag() {
-      diagState.health = diagState.items = diagState.reminders = null;
+      diagState.health = diagState.items = diagState.reminders = diagState.anniv = null;
       diagState.lastErr = '';
       renderDiag();
-      // 三个并发，别串行
-      Promise.all([diagFetch('/health'), diagFetch('/items'), diagFetch('/reminders')])
+      // 四个并发，别串行
+      Promise.all([diagFetch('/health'), diagFetch('/items'), diagFetch('/reminders'),
+        diagFetch('/anniversaries')])
         .then(function (r) {
           diagState.health = r[0];
           diagState.items = r[1];
           diagState.reminders = r[2];
+          diagState.anniv = r[3];
           var now = new Date().toISOString();
           if (r[0].dateOk) diagState.when = r[0].date;
           else if (r[1].dateOk) diagState.when = r[1].date;
           else diagState.when = now;
           // 页面当前是不是在用兜底数据 —— 有就说明至少一个接口挂了，提示得具体点
-          if (state && state._remote && !(state._remote.items && state._remote.reminders)) {
-            diagState.lastErr = (state._remote.itemsErr || '') + (state._remote.remindersErr || '');
+          if (state && state._remote && !(state._remote.items && state._remote.reminders && state._remote.anniv)) {
+            diagState.lastErr = (state._remote.itemsErr || '') + (state._remote.remindersErr || '') +
+              (state._remote.annivErr || '');
           }
           renderDiag();
         });
@@ -1325,10 +1349,13 @@
     function renderTip() {
       var el = document.getElementById('tip');
       var r = state && state._remote;
-      if (r && r.items) {
+      // Day 26：判据改成三个接口全通。原来只看 r.items —— 那时候只有两个接口，
+      // 现在纪念日也是真接口了，只看一个就说「数据来自云端数据库」是谎报：
+      // 实际可能是纪念日正走着本地兜底。
+      if (r && r.items && r.reminders && r.anniv) {
         el.textContent = '数据来自云端数据库';
         el.className = '';
-      } else if (r) {
+      } else if (r && (r.items || r.reminders || r.anniv)) {
         el.textContent = '部分退回本地（数据库没读到）';
         el.className = 'bad';
       } else {
@@ -1438,6 +1465,38 @@
         at: isoToLocalInput(r.remind_at),
         lead: r.lead_minutes == null ? 0 : Number(r.lead_minutes),
         done: r.done === 1 || r.done === true
+      };
+    }
+
+    // Day 26：纪念日的双向映射。
+    //
+    // 【为什么 happen_on 原样透传，不做任何转换】
+    //   库里 happen_on 是 CHAR(10) 的 'YYYY-MM-DD' —— 一个「日历上的一天」，
+    //   **没有时区**（跟 items.plan_date 同理）。前端 <input type="date">
+    //   出来的也是这个形状。两边一模一样，转换就是纯粹引入 bug 的机会。
+    //   （对比 mapReminder 里的 remind_at —— 那个真的要转，因为库里是带 Z 的 UTC 串，
+    //     而前端存的是本地时间串。这一条不要照着那条写。）
+    function mapAnniv(r) {
+      return {
+        id: r.id,
+        title: r.title,
+        date: r.happen_on,                  // ← happen_on
+        // yearly 在库里是 SMALLINT（0/1），前端一直用布尔。
+        yearly: r.yearly === 1 || r.yearly === true
+      };
+    }
+
+    // 前端字段 → 数据库列（写方向）。跟 mapAnniv 反着来。
+    //
+    // ⚠️ yearly 必须转成 **1/0 而不是 true/false**：
+    //   库里 yearly 是 SMALLINT，契约里就写着「yearly 只认 0/1，不认 boolean」。
+    //   发 true 过去会撞类型约束被拒回来（invalid input syntax），报错特别难懂。
+    function toDbAnniv(a) {
+      return {
+        id: a.id,
+        title: a.title,
+        happen_on: a.date,
+        yearly: a.yearly ? 1 : 0
       };
     }
 
@@ -1636,6 +1695,30 @@
       },
       remove: function (id) {
         return function () { return apiSend('DELETE', '/items/' + encodeURIComponent(id)); };
+      },
+      // ---------- Day 26：纪念日 ----------
+      //
+      // 【为什么放在一起而不是另起一套 pushToDb】
+      //  Day 24 把写入收在这一个入口，理由是「错误处理只可能有一种实现」。
+      //  纪念日是新功能，如果自己再写一套 fetch + 错误翻译 + 失败队列，
+      //  那套「三份错误处理」的病会原样复发，而且更糟 —— 两套不一致时
+      //  用户会看到同一个问题两种说法，排查更费劲。
+      //
+      // 【路径为什么是 /anniversaries 而不是 /anniv】
+      //  数据库表叫 anniversaries，云函数路由跟着表名走 —— 一个东西一个名字。
+      //  （前端 state 里那个字段还叫 anniv，那是历史包袱，不必为此改 URL。）
+      annivAdd: function (a) {
+        return function () { return apiSend('POST', '/anniversaries', toDbAnniv(a)); };
+      },
+      annivToggleYearly: function (id, yearly) {
+        return function () {
+          return apiSend('PATCH', '/anniversaries/' + encodeURIComponent(id), {
+            yearly: yearly ? 1 : 0
+          });
+        };
+      },
+      annivRemove: function (id) {
+        return function () { return apiSend('DELETE', '/anniversaries/' + encodeURIComponent(id)); };
       }
     };
 
@@ -1686,23 +1769,37 @@
             // 降级策略：**任何一个挂了都退回 localStorage，而不是让页面空白。**
             // 个人自用工具，宁可显示上一次的数据（可能过期），
             // 也不要打开就是一句「加载失败」—— 那比旧数据更让人烦躁。
-            // 但 courses / anniv 永远给空数组：后端还没有这两张表，
-            // 用 localStorage 里的老值反而会让人以为它们还活着。
+            // 但 courses 永远给空数组：课表已决定不做（见 decision-drop-timetable.md），
+            // 用 localStorage 里的老值反而会让人以为它还活着。
             //
             // 失败原因要留着：万一是跨域，页面上得能说出「是 ALLOWED_ORIGINS 没配这个域名」，
             // 而不是让人对着一个「接口不可达」去查数据库。
-            var itemsErr = '', remindersErr = '';
+            //
+            // ⚠️ Day 26：anniv 曾经也被硬编码成空数组（「后端还没有这两张表」）。
+            //   那时候是合理的妥协 —— 后端确实没有，假装它活着比报「连不上」更糟。
+            //   现在 /anniversaries 有了，就跟 items/reminders 一样走真接口。
+            //   **别再把纪念日写回硬编码空数组** —— 那会让接口明明通了、
+            //   纪念日却永远空着，而且不产生任何错误信号，最难查。
+            var itemsErr = '', remindersErr = '', annivErr = '';
             Promise.all([
               apiGet('/items').catch(function (e) { itemsErr = e.message; return null; }),
-              apiGet('/reminders').catch(function (e) { remindersErr = e.message; return null; })
+              apiGet('/reminders').catch(function (e) { remindersErr = e.message; return null; }),
+              apiGet('/anniversaries').catch(function (e) { annivErr = e.message; return null; })
             ]).then(function (res) {
-              var items = res[0], reminders = res[1];
-              if (items === null && reminders === null) {
-                // 两个接口都挂→ 大概率是断网、环境不可用，或者跨域被拒。
-                // 把两个接口各自的失败原因都带上，别只说一句「不可达」——
-                // 跨域失败时 fetch 一个字响应都拿不到，笼统报错会让人往数据库方向查，
-                // 而实际要改的是 ALLOWED_ORIGINS。2026-10-06 就为这个多花了半小时。
-                var why = [itemsErr, remindersErr].filter(Boolean).join(' ｜ ');
+              var items = res[0], reminders = res[1], annivs = res[2];
+              // 三个全挂 → 大概率是断网、环境不可用，或者跨域被拒。
+              // 把每个接口各自的失败原因都带上，别只说一句「不可达」——
+              // 跨域失败时 fetch 一个字响应都拿不到，笼统报错会让人往数据库方向查，
+              // 而实际要改的是 ALLOWED_ORIGINS。2026-10-06 就为这个多花了半小时。
+              //
+              // ⚠️ 为什么不是「有一个成功就当没事」：
+              //   三个接口各挂各的原因不同 —— anniversaries 是新建的函数，
+              //   路由或环境变量可能还没配（部署半成品的典型状态）。
+              //   只在**全挂**时报错，是因为那时页面会**完全空着**，
+              //   用户看到的是「什么都没有」，那才是真需要报错的情形。
+              //   少一个的时候那个区域自己空着，检查台能看出来就够了。
+              if (items === null && reminders === null && annivs === null) {
+                var why = [itemsErr, remindersErr, annivErr].filter(Boolean).join(' ｜ ');
                 reject(new Error('公网接口没读到数据' + (why ? '：' + why : '')));
                 return;
               }
@@ -1710,15 +1807,17 @@
               resolve({
                 items: items === null ? ((local && local.items) || []) : items.map(mapItem),
                 reminders: reminders === null ? ((local && local.reminders) || []) : reminders.map(mapReminder),
-                courses: (local && local.courses) || [],
-                anniv: (local && local.anniv) || [],
+                courses: [],
+                anniv: annivs === null ? ((local && local.anniv) || []) : annivs.map(mapAnniv),
                 seeded: true,
                 // 供检查台显示用，不参与渲染
                 _remote: {
                   items: items !== null,
                   reminders: reminders !== null,
+                  anniv: annivs !== null,
                   itemsErr: itemsErr || '',
-                  remindersErr: remindersErr || ''
+                  remindersErr: remindersErr || '',
+                  annivErr: annivErr || ''
                 }
               });
             }).catch(reject);
@@ -2354,9 +2453,15 @@
     }
 
     function addAnniv(title, date, yearly) {
-      state.anniv.push({ id: uid(), title: title, date: date, yearly: !!yearly });
+      // Day 26：接上云端。id 在 push 之前生成 —— 它是幂等键，
+      // 契约第 3 条写明「发请求的一方必须持有 id」。
+      // 跟 addItem 完全同一个道理：万一 POST 失败、用户点了重试，
+      // 两次带同一个 id，第二次撞 409，不会凭空多出两条一样的纪念日。
+      var rec = { id: uid(), title: title, date: date, yearly: !!yearly };
+      state.anniv.push(rec);
       save();
       render();
+      pushToDb(syncJobs.annivAdd(rec));
     }
 
     function removeAnniv(id) {
@@ -2368,6 +2473,9 @@
       save();
       render();
       showUndo();
+      // Day 26：云端也得删。原来这里是纯本地操作 —— 现在后端有这张表了，
+      // 不同步的话就会出现「删了但刷新又回来」。
+      pushToDb(syncJobs.annivRemove(id));
     }
 
     function hhmmToMin(hhmm) {
@@ -2659,8 +2767,14 @@
         // 而 DELETE 已经被发出去了（或者正在失败队列里），撤销它不是可靠做法。
         // 重新 POST 同一条才是确定性的。
         //
-        // ⚠️ 只有 kind==='item' 才要发 —— 纪念日（anniv）后端还没有那张表，
-        //   给它发请求会一直404 然后永远重试。那种「注定失败的重试」最烦人。
+        // ⚠️ Day 26：这里原来只有 kind==='item' 才发，注释写着
+        //   「纪念日后端还没有那张表，给它发请求会一直 404 然后永远重试」。
+        //   那个判断在 Day 26 之前是对的 —— 但**前提**已经变了（anniversaries 表上线了），
+        //   前提变了结论就得跟着改。这类「因为还没有 X 所以不做 Y」的代码最危险：
+        //   它不报错，只是安静地继续按旧假设行事。
+        //
+        //   而且如果还只发 item，撤销删掉的纪念日就只恢复在本地 ——
+        //   云端那条还在，下次打开页面它又回来了。撤销等于没撤销。
         //
         // 💡 幂等键在这里第二次派上用场：如果那条 DELETE 其实**发送前就失败了**，
         //   这个 POST 会撞 409。而 409 在这里的含义恰恰就是「它还在」——
@@ -2668,7 +2782,10 @@
         //   「没存上：id 已经在清单里了」的**误报**，
         //   而且是在用户刚做完正确操作之后立刻出现，最劝退。
         //   （这个场景是真打出来的，见 verify-day24-public.md，不是推演。）
-        if (p.kind === 'item') pushToDb(syncJobs.add(p.item), ['DUPLICATE']);
+        pushToDb(
+          p.kind === 'anniv' ? syncJobs.annivAdd(p.item) : syncJobs.add(p.item),
+          ['DUPLICATE']
+        );
       }
 
       save();

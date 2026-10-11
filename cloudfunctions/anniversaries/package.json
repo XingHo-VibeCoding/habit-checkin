@@ -1,0 +1,7 @@
+{
+  "name": "anniversaries",
+  "version": "1.0.0",
+  "description": "Day 26 云函数：GET/POST/PATCH/DELETE /api/anniversaries 读写纪念日表",
+  "main": "index.js",
+  "dependencies": {}
+}

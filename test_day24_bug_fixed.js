@@ -47,7 +47,16 @@ const STUBS = `
   var syncJobs = {
     add: function (it) { return function () { return { id: it.id, title: it.title, op: 'POST' }; }; },
     toggle: function (id) { return function () { return { id: id, op: 'PATCH' }; }; },
-    remove: function (id) { return function () { return { id: id, op: 'DELETE' }; }; }
+    remove: function (id) { return function () { return { id: id, op: 'DELETE' }; }; },
+    // Day 26：纪念日的三个动作。
+    // ⚠️ 加这三个不是「补全一下让测试跑起来」—— 少一个的话 removeAnniv 会
+    //   TypeError，整个测试在场景三就崩了，**后面所有断言都没跑**。
+    //   那是最坏的一种失败：不是红着告诉你哪里坏了，是整个脚本中途死掉。
+    // op 用 ANNIV_ 前缀区分，不跟 items 的混 —— 混了分不清「POST 的是清单还是纪念日」，
+    //   而这正是场景三要验的事。
+    annivAdd: function (a) { return function () { return { id: a.id, title: a.title, op: 'ANNIV_POST' }; }; },
+    annivToggleYearly: function (id) { return function () { return { id: id, op: 'ANNIV_PATCH' }; }; },
+    annivRemove: function (id) { return function () { return { id: id, op: 'ANNIV_DELETE' }; }; }
   };
 `;
 
@@ -140,8 +149,35 @@ console.log('  anniv  =', K.getState().anniv.map(x => x.id));
 check('清单项回到 state.items', K.getState().items.map(x => x.id).join(',') === 'x,y', K.getState().items.map(x => x.id));
 check('★ 纪念日回到 state.anniv（没跑到 items 里去）',
   K.getState().anniv.map(x => x.id).join(',') === 'm1', K.getState().anniv.map(x => x.id));
-check('★ 纪念日不该发 POST（后端还没那张表，发了会永远重试）',
-  K.getSent().filter(x => x.op === 'POST').length === 1, K.getSent().map(x => x.op + ' ' + x.id));
+// ⚠️ 这一条 Day 26 被**反转**了，而且反转的理由值得写下来：
+//
+//   Day 24 原文断言：「纪念日不该发 POST（后端还没那张表，发了会永远重试）」，
+//   期望 POST 数 === 1（只有清单项那笔）。
+//
+//   Day 26 之后这个断言是**错的**：anniversaries 表上线了，纪念日有后端了。
+//   撤销删掉的纪念日如果只在本地恢复、云端那条还在，下次打开页面它又回来
+//   —— **撤销等于没撤销**。
+//
+//   【为什么这类反转危险，而不是「改一下测试让它过」】
+//     测试断言里写着「因为还没有 X 所以不做 Y」。当 X 出现的那天，
+//     这条断言不会失败，它会**继续把新代码判成错的** ——
+//     人看到 FAIL 会以为代码退化了，于是把 X 删掉来「修复」。
+//     这就是「前提变了但断言没跟着变」的代价。
+//   → 所以连注释一起改：让下一个人看到这条时知道它为什么反转，
+//     而不是以为当初就该这么写。
+check('★ 纪念日撤销也发 POST（Day 26：后端有表了，不发就是「撤销等于没撤销」）',
+  K.getSent().filter(x => x.op === 'ANNIV_POST').map(x => x.id).join(',') === 'm1',
+  K.getSent().map(x => x.op + ' ' + x.id));
+check('★ 删掉纪念日时也发了 ANNIV_DELETE（不然云端那条会留着）',
+  K.getSent().filter(x => x.op === 'ANNIV_DELETE').map(x => x.id).join(',') === 'm1',
+  K.getSent().map(x => x.op + ' ' + x.id));
+check('★ 清单项和纪念日各发各的，没串（POST 只有一笔 ANNIV_POST + 一笔 POST）',
+  K.getSent().filter(x => x.op === 'POST').length === 1 &&
+  K.getSent().filter(x => x.op === 'ANNIV_POST').length === 1,
+  K.getSent().map(x => x.op + ' ' + x.id));
+check('★ 纪念日的 POST 同样忽略 409（理由跟 items 一致：那一条可能还在）',
+  K.getSent().filter(x => x.op === 'ANNIV_POST').every(x => x.ignore && x.ignore.indexOf('DUPLICATE') >= 0),
+  K.getSent().filter(x => x.op === 'ANNIV_POST').map(x => x.ignore));
 
 // ─────────────────────────────────────────────────────────────
 console.log('\n【场景四】撤销条过期后，不能再撤销旧的 —— 机会只有UNDO_MS');

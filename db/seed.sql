@@ -25,6 +25,8 @@
 -- 顺序反了会报外键冲突 —— 这是有外键之后最容易踩的一步。
 DELETE FROM reminders WHERE id LIKE 'seed-%';
 DELETE FROM items     WHERE id LIKE 'seed-%';
+-- Day 26：纪念日无外键，但同样跟着清，保持「跑一次就回到种子状态」。
+DELETE FROM anniversaries WHERE id LIKE 'seed-%';
 
 
 -- 6 条清单。跨 3 天，既有已完成也有未完成，这样「今天 / 已完成」两个视图都有数据。
@@ -47,3 +49,17 @@ INSERT INTO reminders (id, item_id, title, remind_at, lead_minutes, done) VALUES
   ('seed-rem-04', 'seed-item-06', '周报提交',        '2026-10-03T10:00:00.000Z',  0,  0),
   ('seed-rem-05', NULL,           '高铁去上海',      '2026-10-03T02:00:00.000Z', 90,  0),
   ('seed-rem-06', NULL,           '牙医预约',        '2026-10-04T06:30:00.000Z', 15,  0);
+
+
+-- Day 26：3 条纪念日，**故意两种都放**，把两种语义都证明一遍。
+--
+-- yearly=1（每年重复）2 条：生日（5-20）和认识纪念日（2000-10-06）。
+--   认识纪念日特意用 2000 年 —— 这样前端能算出「第 N 个」，验证 nth 逻辑。
+-- yearly=0（一次性）1 条：「拿到学位证」在**未来**（2027-06-30），
+--   跟 items.plan_date 的「未来待办」语义一致。
+--   ⚠️ 不放「过去的过去」（一次性且已过）：前端 renderAnniv 的计数分支
+--   已由 test_day24_bug_fixed.js 的纯逻辑测试覆盖，种子数据不承担这个职责。
+INSERT INTO anniversaries (id, title, happen_on, yearly, created_at) VALUES
+  ('seed-anniv-01', '生日',       '2000-05-20', 1, '2026-10-10T00:00:00.000Z'),
+  ('seed-anniv-02', '认识纪念日', '2000-10-06', 1, '2026-10-10T00:00:00.000Z'),
+  ('seed-anniv-03', '拿到学位证', '2027-06-30', 0, '2026-10-10T00:00:00.000Z');
