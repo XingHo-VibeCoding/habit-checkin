@@ -180,3 +180,54 @@ Day 15+ 那时的能力也都还在：今日清单能勾/能加/能删，逾期�
 ⚠️ **发布目录 `.deploy/api/health.json` 是 Day 15 的静态假数据**（`version: day15-mock`）。
 Day 20 的前端不再引用它（健康检查改成打真接口），但文件还在。
 留着无害，别被它骗到 —— 判断线上版本请看检查台里的 `X-Version`，那个才是真的。
+
+---
+
+## 发布前检查（Day 25 起，发布必跑）
+
+**发布是覆盖式的** —— 线上链接可能已经分享出去，覆写之后没法撤回。
+所以有 `preflight.py` 当最后一道闸：把「发布完才发现坏了」变成「发布前就拦住」。
+
+```bash
+python preflight.py                    # 只查本地（拷完文件、发布之前）
+python preflight.py --online            # 完整版（发布前 + 发布后各跑一次）
+python preflight.py --online https://你的域名
+```
+
+退出码 `0` = 全通过，`1` = 有失败项。**没全绿之前不要发布。**
+
+它查六类**不报错**的失败（页面不会弹任何错，只是功能悄悄没生效）：
+
+| 闸 | 拦什么 |
+| --- | --- |
+| A1 JS 语法 | `index.html` 里3000+ 行内联 JS，多一个花括号只会让某块功能静默不响应 |
+| A2 id 空引用 | **最高频的一种**。`getElementById` 返回 null 后接 `.addEventListener`，初始化从这里断掉，后面全不跑 |
+| A3 资源 + 大小写 | 引了不存在的文件；以及 **Windows 不区分大小写、Linux 区分** —— `Logo.png` 本地能显示、传上去就 404 |
+| B1 发布目录一致 | 本项目是手动拷文件，最容易漏。还要比哈希 ——「文件在但还是旧版」比「文件不在」更隐蔽 |
+| B2 assets 同步 | 必须同时拷 `*.jpg` 和 `*.png`（png 是看板娘透明立绘，jpg 存不了 alpha） |
+| B3 无密钥泄露 | `.deploy/` 公网可读，服务端 API Key 进了前端就等于公开 |
+| C 线上（需 `--online`） | precache 每项是否真的取得到、关键文件可达、**线上是不是新版**、图片是否全可达 |
+
+**最隐蔽的一个**是 precache：`cache.addAll()` 里**只要有一条 404，整个 SW 安装就失败**，
+离线能力全无，控制台只留一条 warn。所以 C1 是逐条去取，而不是看清单在不在。
+
+完整流程：
+
+```bash
+python preflight.py                    # 1. 改完先跑（B1b 此刻 FAIL 是正常的，还没拷）
+cp index.html .deploy/ && cp sw.js .deploy/ && cp manifest.json .deploy/
+cp assets/*.jpg assets/*.png .deploy/assets/
+python preflight.py                    # 2. 拷完再跑 —— 这次该全绿
+# 3. 发布
+python preflight.py --online            # 4. 发布后验线上
+# 5. 手动把 sw.js 里的 VERSION 改掉
+```
+
+⚠️ **第 5 步别漏**：SW 缓存的是「`sw.js` 自己的字节」。改了 `index.html` 但没改
+`sw.js`，浏览器认为 SW 没更新，用户永远拿旧版。当前 `VERSION = 'day24-v1'`，每次发布都要手动改。
+
+**修完失败项要全重跑，不要只补测那一条** —— 补拷 `sw.js` 之后 B1b 的哈希就变了。
+
+完整说明（含实测踩过的坑）在 `skills/preflight-check/SKILL.md`。
+这个 Skill 已在本项目实跑过，第一次跑就抓到 3 个问题：`/sw.js` 线上 404、线上还是旧版、
+`.deploy/` 没同步 —— 全是不报错的失败。
