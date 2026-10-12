@@ -88,7 +88,15 @@ def node_path():
 
 
 def read(path):
-    f = io.open(path, encoding='utf-8')
+    """读文本文件。
+
+    ⚠️ 必须用 errors='replace'：2026-10-13 实测，cmd 的 `echo 中文>> file`
+    会把文件写成 GBK，而这里按 UTF-8 读会抛 UnicodeDecodeError——
+    **整个检查脚本当场崩掉**，退出码是 1 但看不出是哪项失败，
+    看起来像「脚本报错了」而不是「检查不通过」。
+    遇到坏字节时替换成 ▯，让检查继续跑完并如实报结果。
+    """
+    f = io.open(path, encoding='utf-8', errors='replace')
     try:
         return f.read()
     finally:
