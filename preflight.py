@@ -36,14 +36,55 @@ INDEX = os.path.join(ROOT, 'index.html')
 DEPLOY = os.path.join(ROOT, '.deploy')
 SW = os.path.join(ROOT, 'sw.js')
 
-NODE_REL = r'.workbuddy\binaries\node\versions\22.22.2-5\node.exe'
+# ⚠️ 不要写死版本号：2026-10-12 实测写死的 22.22.2-5 已经不存在了
+#（被升级成 22.22.2-6），而脚本在找不到 node 时**判 PASS 并显示「跳过」**——
+# 于是「根本没检查」被报告成「检查通过」，比不检查更危险。
+# 现在改成扫目录 + 回退到 PATH 上的 node，并且跳过一律判 FAIL。
+NODE_VERSIONS_REL = r'.workbuddy\binaries\node\versions'
+SKIP = 'SKIP'   # 明确区分「跳过」与「通过」
 
 results = []
 
 
 def check(name, ok, detail=''):
+    """ok 传 SKIP 时输出 SKIP，并**不计入通过数**。
+
+    ⚠️ 关键设计：跳过绝不等于通过。2026-10-12 之前找不到 node 时
+    这里写的是 check(..., True, '跳过')，于是「根本没检查」
+    被显示成绿色的 PASS —— 这是比没有检查更危险的一种失败。
+    """
+    if ok == SKIP:
+        results.append((name, 'SKIP'))
+        print('SKIP  ' + name + (('   | ' + detail) if detail else ''))
+        return
     results.append((name, bool(ok)))
     print(('PASS  ' if ok else 'FAIL  ') + name + (('   | ' + detail) if detail else ''))
+
+
+def node_path():
+    """找可用的 node：先扫 managed versions 目录，再退回 PATH。
+
+    返回 (路径 or None, 来源说明)。找不到返回 (None, 原因)。
+    """
+    home = os.environ.get('USERPROFILE', '')
+    root = os.path.join(home, NODE_VERSIONS_REL)
+    if os.path.isdir(root):
+        cands = []
+        for name in sorted(os.listdir(root)):
+            exe = os.path.join(root, name, 'node.exe')
+            if os.path.isfile(exe):
+                cands.append(exe)
+        # current 可能是软链/副本，排在后面
+        for exe in reversed(cands):
+            if os.path.basename(os.path.dirname(exe)) == 'current':
+                return exe, 'managed current'
+        if cands:
+            return cands[-1], 'managed %s' % os.path.basename(os.path.dirname(cands[-1]))
+    from shutil import which
+    exe = which('node')
+    if exe:
+        return exe, 'PATH'
+    return None, 'managed 目录 %s 下没有 node.exe，PATH 上也没有 node' % root
 
 
 def read(path):
@@ -54,10 +95,8 @@ def read(path):
         f.close()
 
 
-def node_path():
-    """找 managed node。找不到就返回 None（那一项改成「跳过」而不是「失败」。"""
-    p = os.path.join(os.environ.get('USERPROFILE', ''), NODE_REL)
-    return p if os.path.isfile(p) else None
+def node_path_legacy():
+    return None
 
 
 # ══════════════════════════════════════════════════════════
@@ -71,12 +110,12 @@ def a1_js_syntax(use_node):
     页面只是某块功能静默不响应 —— 「点了没反应」是本地最难查的一类。
     """
     if not use_node:
-        check('A1 JS 语法（node 不可用，已跳过）', True, '装个 node 或去掉 --no-node')
+        check('A1 JS 语法', SKIP, '命令行给了 --no-node（语法没查，别当成通过）')
         return
 
-    node = node_path()
+    node, src = node_path()
     if not node:
-        check('A1 JS 语法 —— 找不到 node', True, '跳过（预期路径 %s）' % NODE_REL)
+        check('A1 JS 语法', SKIP, '找不到 node：%s（语法没查，别当成通过）' % src)
         return
 
     html = read(INDEX)
@@ -93,14 +132,15 @@ def a1_js_syntax(use_node):
     f.write('\n'.join(blocks))
     f.close()
 
-    p = subprocess.Popen([node, '--check', tmp], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    node_exe = node
+    p = subprocess.Popen([node_exe, '--check', tmp], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     out = p.communicate()[0].decode('utf-8', 'replace').strip()
-    check('A1 JS 语法（%d 个 script 块）' % len(blocks), p.returncode == 0,
-          out[:300] if out else '')
+    check('A1 JS 语法（%d 个 script 块，node 来自 %s）' % (len(blocks), src),
+          p.returncode == 0, out[:300] if out else '')
 
     # 顺带把 sw.js 也查一遍 —— 它是独立文件，漏查过一次（2026-10-10 线上 404）
     if os.path.isfile(SW):
-        p2 = subprocess.Popen([node, '--check', SW], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        p2 = subprocess.Popen([node_exe, '--check', SW], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         out2 = p2.communicate()[0].decode('utf-8', 'replace').strip()
         check('A1b sw.js 语法', p2.returncode == 0, out2[:300] if out2 else '')
 
@@ -410,15 +450,21 @@ def main():
         c_online(online)
 
     total = len(results)
-    bad = [r for r in results if not r[1]]
+    skipped = [r for r in results if r[1] == 'SKIP']
+    bad = [r for r in results if r[1] is False]
+    ok = [r for r in results if r[1] is True]
     print('')
     print('=' * 52)
-    print('%d/%d 通过' % (total - len(bad), total))
+    print('%d/%d 通过%s' % (len(ok), total - len(skipped),
+                           ('，%d 项跳过（**没检查，不等于通过**）' % len(skipped)) if skipped else ''))
+    if skipped:
+        for name, _ in skipped:
+            print('  SKIP: %s' % name)
     if bad:
         print('')
         print('有失败项 —— 修复后重跑。**没全绿之前不要发布**（发布是覆盖式的，'
               '线上链接可能已经分享给别人了）。')
-    return 1 if bad else 0
+    return 1 if (bad or skipped) else 0
 
 
 if __name__ == '__main__':

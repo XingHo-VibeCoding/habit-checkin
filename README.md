@@ -231,3 +231,37 @@ python preflight.py --online            # 4. 发布后验线上
 完整说明（含实测踩过的坑）在 `skills/preflight-check/SKILL.md`。
 这个 Skill 已在本项目实跑过，第一次跑就抓到 3 个问题：`/sw.js` 线上 404、线上还是旧版、
 `.deploy/` 没同步 —— 全是不报错的失败。
+
+---
+
+## 项目正确性检查（提交前必跑）
+
+上面那个查的是「**发布**环节漏了什么」；这个查的是「**代码与数据之间的契约**还成不成立」。
+症状区别：线上不对 → 查 preflight；代码不对 → 查这个。
+
+```bash
+python verify_project.py     # 提交 commit 之前必跑，退出码 0 = 全通过
+```
+
+24 项，分五组。每项都来自本项目真实踩过的坑，FAIL 时会打印「为什么查这条」：
+
+| 组 | 查什么 |
+| --- | --- |
+| **A 数据契约**（6） | SQL 能同时跑 PostgreSQL/MySQL/SQLite；`TINYINT`/`DATETIME`/`BOOLEAN`/三种 upsert 方言；seed 幂等；真实数据 id 不蹭 `seed-` 前缀（会被 DELETE 连带清空且无提示）；前后端字段映射双向对齐；时刻列存 ISO UTC、日历列 `CHAR(10)`、0/1 存 `SMALLINT` |
+| **B 云函数契约**（9） | `errors-human` 双路径 require；用内置 `https` 不用全局 fetch（Node 16 没有）；环境变量 `CLOUDBASE_APIKEY`/`API_KEY` 双名都读；跨域白名单不退 `*`；写方法齐；走 PostgREST 不走内网直连；删除返回 404 不谎报成功；重复提交 409；密钥不进前端 |
+| **C 测试有效性**（4） | 专拦**假绿**：顶层 `return` 会静默截断用例且退出码还是 0（踩过：以为跑了 75 条其实只跑 3 条）；桩没跟上源码 |
+| **D 密钥边界**（2） | 工作区 + Git 全历史都不得有真实密钥 |
+| **E 前后端契约**（3） | 前端调的路径都有云函数；没有孤儿云函数；前端 env ID 与云函数**相等** |
+
+**两个 Skill 一起用**，提交前的标准顺序：
+
+```bash
+python verify_project.py     # 1. 契约
+python preflight.py          # 2. 发布（要发布时才跑）
+```
+
+完整说明在 `skills/verify-project/SKILL.md`。
+那里面有一节「这个 Skill 自己被修过 9 处」，记的是**哪些写法会骗过检查** ——
+比如「注释里写着『不用 BOOLEAN』会被判成用了 BOOLEAN」、
+「正则匹配不到对象时，报告和『没问题』长得一模一样」，
+比检查项清单本身更值得看。
