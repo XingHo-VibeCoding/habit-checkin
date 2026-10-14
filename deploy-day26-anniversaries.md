@@ -124,6 +124,14 @@ package.json
 
 **如果报「找不到 index.js」**：zip 选错了（可能选成了目录）。必须是那个 `.zip` 文件本身。
 
+> 🔴 **2026-10-14 实战教训（这条警告就是为它写的）**：把 `anniversaries` **文件夹**
+> 当成 zip 上传，云端只有 3 个文件 —— **文件夹里没有 `errors-human.js`**
+> （它放在上一级 `cloudfunctions\` 目录，打包脚本特意把它打进 zip）。
+> 结果：上传不报错，一调用就 `FUNCTIONS_INVOCATION_FAILED`，排查花了半天。
+> **鉴别方法**：文件选择框里 `anniversaries` 📁 和 `anniversaries.zip` 📦 长得很像，
+> **认准带 zip 图标 / `.zip` 后缀的那个**。
+> **部署后必查**：函数代码 → 文件树里必须看到 **4 个文件**，少一个就重传。
+
 ---
 
 ## 第 4 步：配环境变量（5 分钟）
