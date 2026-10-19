@@ -287,6 +287,7 @@ def gate_a():
 # ================================================================ B. 云函数契约
 
 def gate_b():
+    idx = read('index.html') or ''
     files = []
     for f in FUNCS:
         files += ['cloudfunctions/%s/index.js' % f]
@@ -379,13 +380,23 @@ def gate_b():
             declared = set(re.findall(r"'(GET|POST|PATCH|DELETE)'", m_arr.group(1)))
         else:
             declared = set(re.findall(r"method\s*===?\s*'(GET|POST|PATCH|DELETE)'", body))
+        # Day 27 修订：从「写函数必须四方法齐」改为「**方法集合必须与前端调用一致**」。
+        # 原因：reminders 补写入后只声明 GET/POST/DELETE（提醒没有编辑/勾选 UI，不做
+        # 「以防万一」的 PATCH）—— 按「四方法齐」的旧规则它永远 FAIL，规则本身错了。
+        # 契约的本意是「前端调的每个方法云函数都认，云函数认的每个方法都有出处」，
+        # 四方法齐只是 items/anniversaries 的现状，不是普适规则。
+        front_methods = set(re.findall(
+            r"apiSend\(\s*'(GET|POST|PATCH|DELETE)'\s*,\s*'/" + f, idx))
+        if front_methods and not front_methods <= declared:
+            miss = front_methods - declared
+            missing_m.append('%s 前端调了 %s 但云函数没实现' % (f, '/'.join(sorted(miss))))
         gap = [m for m in ('GET', 'POST', 'PATCH', 'DELETE') if m not in declared]
-        if gap:
+        if not front_methods and gap:
             missing_m.append('%s 缺 %s' % (f, '/'.join(gap)))
-    check('B5', '写方法齐（items/anniversaries 四方法；reminders 设计上只读）',
+    check('B5', '方法集合与前端调用一致（items/anniv 四方法；reminders GET/POST/DELETE）',
           not missing_m,
-          '写函数四方法齐全；只读函数：%s（无 insert/update/remove，与设计一致）' % (readonly or '无')
-          if not missing_m else '；'.join(missing_m[:4]),
+          '各写函数声明的方法覆盖了前端的全部调用；无孤儿方法' if not missing_m
+          else '；'.join(missing_m[:4]),
           '云函数控制台要逐个勾这四个方法，漏勾的话前端调了会 404，'
           '但代码里明明写着 —— 排查时极容易归错因')
 

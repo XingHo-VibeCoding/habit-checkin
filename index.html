@@ -1486,6 +1486,27 @@
       };
     }
 
+    // 前端字段 → 数据库列（写方向）。Day 27：提醒接入云端写入。
+    //
+    // ⚠️ at → remind_at 是**真转换**，是三个映射里唯一动时区的：
+    //   前端 at 是本地时间串（'2026-10-19T09:00'，来自 <input type="datetime-local">），
+    //   库里 remind_at 是 ISO UTC 串。new Date(本地串) 按本机时区解析，
+    //   toISOString() 出来就是对应的 UTC —— 读方向 isoToLocalInput 的逆操作。
+    //
+    // ⚠️ done 转 1/0 不转 true/false（yearly 同理，SMALLINT 契约）。
+    //
+    // ⚠️ itemId 前端是 null/字符串，库里是可空列：null 原样发（NULL = 独立提醒）。
+    function toDbReminder(r) {
+      return {
+        id: r.id,
+        title: r.title,
+        item_id: r.itemId == null ? null : r.itemId,
+        remind_at: new Date(r.at).toISOString(),
+        lead_minutes: r.lead == null ? 0 : Number(r.lead),
+        done: r.done ? 1 : 0
+      };
+    }
+
     // 前端字段 → 数据库列（写方向）。跟 mapAnniv 反着来。
     //
     // ⚠️ yearly 必须转成 **1/0 而不是 true/false**：
@@ -1719,6 +1740,18 @@
       },
       annivRemove: function (id) {
         return function () { return apiSend('DELETE', '/anniversaries/' + encodeURIComponent(id)); };
+      },
+      // ---------- Day 27：提醒的云端写入 ----------
+      //
+      // 【为什么今天才接上】提醒的云函数 Day 19 只做了读取（GET），
+      //   前端提醒的增删一直只写 localStorage —— 换设备/app 后提醒不跟人走，
+      //   删除也没有撤销。Day 27 试用反馈直接命中这个缺口，云函数补了 POST/DELETE，
+      //   前端这里接入 pushToDb 体系（错误翻译、失败队列、重试全部白得）。
+      remAdd: function (r) {
+        return function () { return apiSend('POST', '/reminders', toDbReminder(r)); };
+      },
+      remRemove: function (id) {
+        return function () { return apiSend('DELETE', '/reminders/' + encodeURIComponent(id)); };
       }
     };
 
@@ -2237,10 +2270,31 @@
       render();
     }
 
+    // Day 27：提醒删除对齐 items 的两层防护（确认弹层 + 撤销条）+ 云端 DELETE。
+    // 旧版只有三行（改本地→存→渲染）：没有确认、没有撤销、云端也不知道。
     function removeReminder(id) {
-      state.reminders = state.reminders.filter(function (r) { return r.id !== id; });
+      var index = -1;
+      state.reminders.forEach(function (r, n) { if (r.id === id) index = n; });
+      if (index < 0) return;
+      askDelete(state.reminders[index].title, function () { doRemoveReminder(id); });
+    }
+
+    function doRemoveReminder(id) {
+      var index = -1;
+      state.reminders.forEach(function (r, n) { if (r.id === id) index = n; });
+      if (index < 0) return;
+      // 删之前先记住「删的是谁、它原本排第几」—— 撤销要放回原位（kind='rem' 走 reminders 数组）
+      var record = { kind: 'rem', item: state.reminders[index], index: index };
+      var removedId = state.reminders[index].id;
+      state.reminders.splice(index, 1);
+      pendingUndo.push(record);
       save();
       render();
+      showUndo();
+
+      // 与 doRemoveItem 同一条注释的理由：故意不加 ?force=1，
+      // 「删不掉就说删不掉」，别把云端和本地的差异埋掉。
+      pushToDb(syncJobs.remRemove(removedId));
     }
 
     function daysAgo(dateStr, today) {
@@ -2731,7 +2785,9 @@
     function defaultUndoMsg() {
       if (!pendingUndo.length) return '';
       var head = pendingUndo[0].item.title;
-      var noun = pendingUndo[0].kind === 'anniv' ? '纪念日' : '';
+      var noun = pendingUndo[0].kind === 'anniv' ? '纪念日'
+               : pendingUndo[0].kind === 'rem' ? '提醒'
+               : '';
       if (pendingUndo.length === 1) return '已删除' + noun + '「' + head + '」';
       return '已删除' + noun + '「' + head + '」等 ' + pendingUndo.length + ' 条';
     }
@@ -2757,8 +2813,10 @@
       //   倒序：先插 b 到 0 → [b,c]，再插 a 到 0 → [a,b,c]，顺序正确。
       for (var i = batch.length - 1; i >= 0; i--) {
         var p = batch[i];
-        // 清单项和纪念日各存各的数组，按 kind 决定插回哪一支
-        var arr = p.kind === 'anniv' ? state.anniv : state.items;
+        // 清单项/纪念日/提醒各存各的数组，按 kind 决定插回哪一支
+        var arr = p.kind === 'anniv' ? state.anniv
+                : p.kind === 'rem' ? state.reminders
+                : state.items;
         arr.splice(Math.min(p.index, arr.length), 0, p.item);
         // Day 24：撤销删除 = 云端也得把这一条放回去。
         //
@@ -2783,7 +2841,9 @@
         //   而且是在用户刚做完正确操作之后立刻出现，最劝退。
         //   （这个场景是真打出来的，见 verify-day24-public.md，不是推演。）
         pushToDb(
-          p.kind === 'anniv' ? syncJobs.annivAdd(p.item) : syncJobs.add(p.item),
+          p.kind === 'anniv' ? syncJobs.annivAdd(p.item)
+          : p.kind === 'rem' ? syncJobs.remAdd(p.item)
+          : syncJobs.add(p.item),
           ['DUPLICATE']
         );
       }
@@ -2837,15 +2897,18 @@
       var lead = parseInt(remLead.value, 10);
       if (isNaN(lead) || lead < 0) lead = 0;
 
-      state.reminders.push({
+      var rem = {
         id: uid(),
         title: title,
         at: remAt.value,        // "YYYY-MM-DDTHH:mm" 本地时间
         lead: lead,
         done: false
-      });
+      };
+      state.reminders.push(rem);
       save();
       render();
+      // Day 27：接入云端写入（错误翻译、失败队列、重试全部由 pushToDb 体系提供）。
+      pushToDb(syncJobs.remAdd(rem));
       remTitle.value = '';
       remLead.value = '0';
       remTitle.focus();

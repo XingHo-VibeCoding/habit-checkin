@@ -19,9 +19,19 @@
 // ★ 唯一一处 require。数据访问层——只经它，不直接碰 https。
 var repo = require('./remindersRepository');
 
-var VERSION = 'day23';
+var VERSION = 'day27';
 var DEFAULT_LIMIT = 100;
 var MAX_LIMIT = 200;
+
+// Day 27：写入相关常量，与 items 侧同值（同一条契约）。
+var MAX_TITLE = 200;
+var MAX_ID = 36;
+var MAX_TS = 32;
+var MAX_LEAD = 10080;   // 7 天 = 10080 分钟。提醒提前量超过一周没有现实意义，
+                        // 而且设上限能挡住 ?lead=999999999 这种手滑。
+// 可写字段。前端字段名是 at/lead（见 api-contract 的映射表），
+// 发原始字段名过来会在这里被拒掉，而不是静默存进一个空列。
+var WRITABLE = ['id', 'title', 'item_id', 'remind_at', 'lead_minutes', 'done'];
 
 // ---------- CORS 白名单（Day 20）----------
 // 与 items 函数里那份**完全相同**的逻辑，重复是有意的：
@@ -79,7 +89,7 @@ var humanUpstream = function (e) { return human.humanUpstream(e, null); };
 function withHttp(statusCode, payload, req) {
   var headers = {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     // 不加这行，浏览器 fetch 读 X-Version 会得到 null（它只认「简单响应头」）
     'Access-Control-Expose-Headers': 'X-Version, X-Service, Date',
@@ -129,8 +139,234 @@ function toLimit(raw) {
   return { value: n };
 }
 
-// ⑤ 入口。
+// ⑤ Day 27：请求体解析。照 items/index.js 的 parseBody 抄（网关已解析对象 / 原始串 / base64 三种都认）。
+function parseBody(event) {
+  var raw = (event || {}).body;
+  if (raw === undefined || raw === null || raw === '') {
+    return { error: '请求体是空的。要新增一条提醒请用 POST，并在 body 里传一个 JSON 对象。' };
+  }
+  if (typeof raw === 'object' && !Buffer.isBuffer(raw)) return { value: raw };
+  var text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
+  if ((event || {}).isBase64Encoded) {
+    try {
+      text = Buffer.from(text, 'base64').toString('utf8');
+    } catch (e) {
+      return { error: '请求体是 base64 编码的，但解不开。' };
+    }
+  }
+  try {
+    return { value: JSON.parse(text) };
+  } catch (e2) {
+    return { error: '请求体不是合法的 JSON。检查一下有没有多逗号、单引号，或中文引号「」。' };
+  }
+}
+
+// ⑥ Day 27：remind_at 是「时间轴上的一个点」（带时区），跟 plan_date 的校验不同 ——
+//    它接受 ISO 8601 带时区的串（前端入库前会把本地时间转成 UTC）。
+//    格式对不等于时间真实存在，Date.parse 能挡掉大部分；秒级精度不做强校验，
+//    数据库列是 text（时刻一律存 ISO UTC 字符串，见 db/schema.sql 的契约注释）。
+function isIsoTimestamp(s) {
+  if (typeof s !== 'string' || s.length === 0 || s.length > MAX_TS + 8) return false;
+  return !isNaN(Date.parse(s)) && /\d{2}:\d{2}/.test(s);
+}
+
+// ⑦ Day 27：校验并组装要插入的一行。返回 { row } 或 { error }（中文，直接给用户看）。
+//
+//     【id 必填且由客户端生成】—— 与 items 同一条契约：id 是幂等键，
+//     重试时带同一个 id，重复提交撞主键 → 409，不会凭空多出两条。
+//
+//     【remind_at 必须是 UTC ISO 串】—— 前端 toDbReminder 负责「本地时间 → UTC」。
+//     这里只查形状（有日期有时间、能被 Date.parse 解析）。时区在服务端无从校验，
+//     靠的是前端映射函数 + verify_project 的字段映射检查。
+function validateBody(body) {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: '请求体必须是一个 JSON 对象，形如 {"id":"...","title":"...","remind_at":"2026-10-19T09:00:00.000Z"}。' };
+  }
+
+  var extra = [];
+  for (var k in body) {
+    if (Object.prototype.hasOwnProperty.call(body, k) && WRITABLE.indexOf(k) < 0) extra.push(k);
+  }
+  if (extra.length) {
+    return { error: '不认识的字段：' + extra.join('、') + '。可写字段只有：' + WRITABLE.join('、') + '。' };
+  }
+
+  // id（幂等键）—— 与 items 同一条契约、同一段理由
+  var id = body.id;
+  if (id === undefined || id === null || id === '') {
+    return { error: '缺 id。id 是防重复提交的幂等键，必须由你（调用方）生成并带上，重试时用同一个 id。' };
+  }
+  if (typeof id !== 'string') return { error: 'id 必须是字符串，收到 ' + typeof id + '。' };
+  if (id.length > MAX_ID) return { error: 'id 太长了（' + id.length + ' 字），最多 ' + MAX_ID + ' 字。' };
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+    return { error: 'id 只能含字母、数字、下划线和连字符，收到 "' + id + '"。' };
+  }
+
+  // title —— 与 items 同规则（≤200，trim 后非空）
+  var title = body.title;
+  if (title === undefined || title === null || title === '') {
+    return { error: '缺 title（提醒内容）。' };
+  }
+  if (typeof title !== 'string') return { error: 'title 必须是字符串，收到 ' + typeof title + '。' };
+  var t = title.trim();
+  if (!t) return { error: 'title 不能是空字符串或只有空格。' };
+  if (t.length > MAX_TITLE) {
+    return { error: 'title 太长了（' + t.length + ' 字），最多 ' + MAX_TITLE + ' 字 —— 手机上一行显示不完，请改短。' };
+  }
+
+  // remind_at —— 必填，ISO 8601 时间戳
+  var remindAt = body.remind_at;
+  if (remindAt === undefined || remindAt === null || remindAt === '') {
+    return { error: '缺 remind_at（提醒时间），格式 ISO 8601，例如 "2026-10-19T09:00:00.000Z"。' };
+  }
+  if (typeof remindAt !== 'string') return { error: 'remind_at 必须是字符串，收到 ' + typeof remindAt + '。' };
+  if (!isIsoTimestamp(remindAt)) {
+    return { error: 'remind_at 必须是合法的 ISO 8601 时间戳（带日期和时间），收到 "' + remindAt + '"。' };
+  }
+
+  // lead_minutes —— 可空，默认 0。上限 7 天（见 MAX_LEAD 注释）。
+  var lead = body.lead_minutes;
+  if (lead === undefined || lead === null || lead === '') lead = 0;
+  if (typeof lead !== 'number' || !isFinite(lead) || Math.floor(lead) !== lead) {
+    return { error: 'lead_minutes 必须是整数（提前多少分钟提醒），收到 "' + lead + '"。' };
+  }
+  if (lead < 0 || lead > MAX_LEAD) {
+    return { error: 'lead_minutes 必须在 0–' + MAX_LEAD + ' 之间（最多提前 7 天），收到 ' + lead + '。' };
+  }
+
+  // item_id —— 可空（NULL = 独立提醒，不挂在任何清单项下）。挂了的话长度同 id 规则。
+  var itemId = body.item_id;
+  if (itemId !== undefined && itemId !== null && itemId !== '') {
+    if (typeof itemId !== 'string') return { error: 'item_id 必须是字符串，收到 ' + typeof itemId + '。' };
+    if (itemId.length > MAX_ID) return { error: 'item_id 太长了（' + itemId.length + ' 字），最多 ' + MAX_ID + ' 字。' };
+    if (!/^[A-Za-z0-9_-]+$/.test(itemId)) {
+      return { error: 'item_id 只能含字母、数字、下划线和连字符，收到 "' + itemId + '"。' };
+    }
+  } else {
+    itemId = null;
+  }
+
+  // done —— 可空，默认 0。SMALLINT 只认 0/1，不认 boolean（契约硬约束）。
+  var done = body.done;
+  if (done === undefined || done === null || done === '') done = 0;
+  if (done !== 0 && done !== 1) {
+    return { error: 'done 只认 0 或 1（不认 true/false）—— 数据库列是 SMALLINT，发布尔值会被拒。' };
+  }
+
+  return {
+    row: {
+      id: id,
+      title: t,
+      item_id: itemId,
+      remind_at: remindAt,
+      lead_minutes: lead,
+      done: done
+    }
+  };
+}
+
+// ⑧ Day 27：从路径取 id。reminders 挂在 /api/reminders 下，照 items 的 pathId 抄，
+//    只把正则里的表名换成 reminders。
+function pathId(event) {
+  var e = event || {};
+  var raw = '';
+  var pp = e.pathParameters || {};
+  if (pp && pp.id !== undefined && pp.id !== null) raw = String(pp.id);
+  if (!raw && e.path) {
+    // path 可能形如 /api/reminders/abc123，也可能是完整 URL
+    var m = String(e.path).match(/\/api\/reminders\/([^/?#]+)/);
+    if (m) raw = m[1];
+  }
+  if (!raw) {
+    var q = parseQuery(e);
+    if (q.id !== undefined && q.id !== null && String(q.id) !== '') raw = String(q.id);
+  }
+  return decodeURIComponent(raw);
+}
+
+// ⑨ Day 27：新增一条提醒。模式照 items 的 handlePost 一字不差地抄 ——
+//    校验 → insert → 409 → 400/422 → 5xx → 201 回读。
+//    两处一致比一套耦合便宜（本文件头部的老理由，Day 23 也引用过）。
+async function handlePost(event, startedAt) {
+  var parsed = parseBody(event);
+  if (parsed.error) {
+    return withHttp(400, fail('BAD_REQUEST', parsed.error), event);
+  }
+
+  var v = validateBody(parsed.value);
+  if (v.error) {
+    return withHttp(400, fail('BAD_REQUEST', v.error), event);
+  }
+
+  var row = v.row;
+  var r = await repo.insert(row);
+
+  // ★ 主键撞了 = 重复提交。同一个 id 第二次进来，就走到这里。
+  if (r.status === 409 || /23505|duplicate key/i.test(r.text)) {
+    return withHttp(409, fail('DUPLICATE',
+      '这个 id 已经在提醒里了（重复提交）。id 是防重复提交的幂等键 —— 如果你确实想加两条不同的提醒，请换一个 id。'), event);
+  }
+
+  if (r.status === 400 || r.status === 422) {
+    return withHttp(400, fail('BAD_REQUEST',
+      '这一条没能存进数据库：' + String(r.text).slice(0, 200) +
+      '。如果反复出现，说明页面和数据库的字段对不上，请联系开发。'), event);
+  }
+
+  if (r.status < 200 || r.status >= 300) {
+    return withHttp(502, fail('UPSTREAM', humanUpstream(new Error('PG REST 返回 ' + r.status + '：' + r.text))), event);
+  }
+
+  // 201 + return=representation → 返回库里真正存的那行；网关把 Prefer 头吃掉时
+  // parsed 为 null，退回发过去的这一行 —— 至少形状对。
+  return withHttp(201, ok(r.parsed || row), event);
+}
+
+// ⑩ Day 27：删除一条提醒。模式照 items 的 handleDelete：
+//    id 校验 → 预查存在（404）→ remove → 回读那一行（撤销条要用）。
+async function handleDelete(event, startedAt) {
+  var id = pathId(event);
+  if (!id) {
+    return withHttp(400, fail('BAD_REQUEST',
+      'URL 里没有 id。删一条要写成 /api/reminders/<id>。'), event);
+  }
+  if (id.length > MAX_ID) return withHttp(400, fail('BAD_REQUEST', 'id 太长了（' + id.length + ' 字）。'), event);
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+    return withHttp(400, fail('BAD_REQUEST', 'id 只能含字母、数字、下划线和连字符，收到 "' + id + '"。'), event);
+  }
+
+  var q = parseQuery(event);
+  var force = q.force === '1' || q.force === 'true';
+
+  var found = await repo.exists(id);
+  if (!found && !force) {
+    return withHttp(404, fail('NOT_FOUND',
+      '提醒里没有 id 为 "' + id + '" 的这一条 —— 也许已经被删过了。' +
+      '如果你要的是「确保它不在」（幂等删除），加 ?force=1。'), event);
+  }
+
+  var r = await repo.remove(id);
+
+  if (r.status === 404) {
+    return withHttp(404, fail('NOT_FOUND', '这一条在删除过程中消失了。'), event);
+  }
+  if (r.status < 200 || r.status >= 300) {
+    return withHttp(502, fail('UPSTREAM', humanUpstream(new Error('PG REST 返回 ' + r.status + '：' + r.text))), event);
+  }
+
+  var deleted = r.parsed;
+  return withHttp(200, ok({
+    deleted: !!deleted,
+    row: deleted,
+    // 把被删掉的那行原样还回去 —— 前端撤销条要用它重新 POST。
+    note: deleted ? '已删除。row 是从数据库回读的那一行，可用于撤销。'
+                  : '删除已执行，但没能回读确认（Prefer 头可能没生效）。'
+  }), event);
+}
+
+// ⑪ 入口。
 exports.main = async function (event) {
+  var startedAt = Date.now();   // Day 27：POST/DELETE 的日志埋点要用（与 items 对齐）
   // Day 23：跟 items 侧同一条改动（同一天做的两处必须一样，
   // 不然「同一个错在两个函数里说法不同」这种坑又要重踩）。
   var method = '';
@@ -150,13 +386,13 @@ exports.main = async function (event) {
     return withHttp(204, ok(null), event);
   }
 
-  if (method !== 'GET') {
-    // Day 23：错误码跟 items 侧对齐成 METHOD_NOT_ALLOWED（原来写的是 BAD_REQUEST）。
-    // 405 和 400 排查动作完全不同：405 是「你调错方法了」，400 是「参数不对」。
-    // 混用会把排查方向带偏 —— 跟 items 侧不一致更要命，两处同一件事两种说法。
-    var r405 = withHttp(405, fail('METHOD_NOT_ALLOWED', '这个接口只支持 GET，收到 ' + method + '。'), event);
-    // 405 必须带 Allow 头（RFC 7231 要求），否则有些客户端报的是「方法不支持」而不是 405
-    r405.headers.Allow = 'GET, OPTIONS';
+  // Day 27：从只读升级为 GET/POST/DELETE。PATCH 暂无场景（提醒没有勾选/编辑 UI），
+  // 不做「以防万一」的实现 —— 没被走过的分支不会被发现，也不会被测到。
+  var ALLOWED = ['GET', 'POST', 'DELETE'];
+  if (ALLOWED.indexOf(method) < 0) {
+    var r405 = withHttp(405, fail('METHOD_NOT_ALLOWED',
+      '这个接口支持 ' + ALLOWED.join(' / ') + '，收到 ' + method + '。'), event);
+    r405.headers.Allow = ALLOWED.join(', ');
     return r405;
   }
 
@@ -168,6 +404,9 @@ exports.main = async function (event) {
       // 页面上的人要知道的是「这不是你操作的问题」。
       return withHttp(500, fail('CONFIG_MISSING', humanConfig(hint)), event);
     }
+
+    if (method === 'POST') return await handlePost(event, startedAt);
+    if (method === 'DELETE') return await handleDelete(event, startedAt);
 
     var q = parseQuery(event);
 

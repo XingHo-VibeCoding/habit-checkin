@@ -23,7 +23,7 @@
  *        而用户已经以为同步成功了。宁可断网时报错，也不能假装成功。
  */
 
-const VERSION = 'v1.0';
+const VERSION = 'v1.1';
 const SHELL = [
   './',
   './index.html',

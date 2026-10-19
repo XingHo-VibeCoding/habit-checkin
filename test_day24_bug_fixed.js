@@ -56,7 +56,10 @@ const STUBS = `
     //   而这正是场景三要验的事。
     annivAdd: function (a) { return function () { return { id: a.id, title: a.title, op: 'ANNIV_POST' }; }; },
     annivToggleYearly: function (id) { return function () { return { id: id, op: 'ANNIV_PATCH' }; }; },
-    annivRemove: function (id) { return function () { return { id: id, op: 'ANNIV_DELETE' }; }; }
+    annivRemove: function (id) { return function () { return { id: id, op: 'ANNIV_DELETE' }; }; },
+    // Day 27：syncJobs 长了提醒的云端写入方法，桩跟着长（桩不跟 = TypeError 假崩）
+    remAdd: function (r) { return function () { return { id: r.id, op: 'REM_ADD' }; }; },
+    remRemove: function (id) { return function () { return { id: id, op: 'REM_DELETE' }; }; }
   };
 `;
 

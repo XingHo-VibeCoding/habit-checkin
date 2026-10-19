@@ -596,7 +596,12 @@ var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
   fakeStatus = 200;
 
   r = await reminders.main({ httpMethod: 'POST' });
-  check('reminders 仍然挡 POST（405）', r.statusCode === 405, String(r.statusCode));
+  // Day 27 反转：原断言是「reminders 仍然挡 POST（405）」—— Day 19 只做了读取，
+  // 405 是当时的设计。Day 27 给 reminders 补了写入（试用反馈命中的缺口），
+  // **前提变了，结论必须跟着改**：现在 POST 应该通过路由进入校验层，
+  // 空 body 被校验层挡成 400（而不是 405）。这类「因为还没有 X 所以不做 Y」的
+  // 过时断言最危险：它不报错，只是安静地反对新代码。
+  check('reminders 接受 POST 并进入校验（空 body → 400，不再 405）', r.statusCode === 400, String(r.statusCode));
 
   captured = null;
   r = await reminders.main({ httpMethod: 'GET', queryStringParameters: { item_id: 'seed-item-02', limit: '3' } });
@@ -618,6 +623,64 @@ var reminders = require(path.join(__dirname, 'reminders', 'index.js'));
   delete process.env.CLOUDBASE_APIKEY;
   r = await reminders.main({ httpMethod: 'GET' });
   check('reminders 也检查 API Key', body(r).error.code === 'CONFIG_MISSING', JSON.stringify(body(r)));
+
+  // =====================================================================
+  // Day 27：reminders 补写入（POST / DELETE）
+  // =====================================================================
+  // 背景：Day 19 只做了读取，前端提醒的增删一直只写 localStorage ——
+  // 换设备/app 后提醒不跟人走，删除也没有撤销。Day 27 试用反馈直接命中。
+  // 本小节验证写入链路的校验、409、404 与回读，模式照 Day 22 的 items 用例。
+  console.log('\n[Day 27 · reminders POST / DELETE]');
+
+  // 上一段结尾删掉了 API Key，这里重新设上（Day 22 踩过的同款坑：不设全 500）
+  process.env.CLOUDBASE_APIKEY = 'test-key';
+
+  var REM_ROW = { id: 'rem-d27', item_id: null, title: '高铁去上海', remind_at: '2026-10-20T01:00:00.000Z', lead_minutes: 60, done: 0 };
+
+  resetFake();
+  fakeStatus = 201;
+  // 回读行故意和发出去的略有差异（created_at 是库生成的），验证返回的是库里那行
+  fakeBody = JSON.stringify([Object.assign({}, REM_ROW, { created_at: '2026-10-19T12:00:00.000Z' })]);
+
+  r = await reminders.main({ httpMethod: 'POST', body: JSON.stringify(REM_ROW) });
+  check('reminders POST 成功 → 201', r.statusCode === 201, '实际 ' + r.statusCode + ' / ' + r.body);
+  b = body(r);
+  check('信封 { ok:true, data:{...} }，data 是回读行（含 created_at）',
+        b.ok === true && b.data && b.data.id === 'rem-d27' && !!b.data.created_at, JSON.stringify(b).slice(0, 120));
+  check('方法是 POST', captured.method === 'POST', String(captured.method));
+  check('路径指向 reminders 表', captured.path === '/v1/rdb/rest/reminders', captured.path);
+  var prefer27 = captured.headers.Prefer || '';
+  check('Prefer 头要求回读（return=representation）', /return=representation/.test(prefer27), prefer27);
+  check('请求体带上了 title 和 remind_at（本地时间已转 UTC）',
+        /高铁去上海/.test(capturedBody) && /2026-10-20T01:00:00/.test(capturedBody), capturedBody.slice(0, 140));
+
+  resetFake();
+  r = await reminders.main({ httpMethod: 'POST', body: JSON.stringify({ id: 'x', title: '缺时间' }) });
+  check('POST 缺 remind_at → 400（且不发网络请求）', r.statusCode === 400 && captured === null,
+        '状态 ' + r.statusCode + '，captured=' + (captured ? '有' : 'null'));
+
+  resetFake();
+  r = await reminders.main({ httpMethod: 'POST', body: JSON.stringify({ id: 'x', title: 'x', remind_at: '2026-10-20T01:00:00.000Z', done: true }) });
+  check('POST done 发布尔 → 400（SMALLINT 只认 0/1）', r.statusCode === 400, String(r.statusCode));
+
+  // DELETE：exists 的桩必须回「有一行」—— 回 '[]' 会被判不存在，全部落进 404
+  // （Day 22 踩过的同款坑，见上面 Q2 的注释）
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[{"id":"rem-d27"}]' }, { status: 200, body: JSON.stringify(REM_ROW) } ];
+  r = await reminders.main({ httpMethod: 'DELETE', path: '/api/reminders/rem-d27' });
+  check('reminders DELETE 成功 → 200', r.statusCode === 200, '实际 ' + r.statusCode + ' / ' + r.body);
+  b = body(r);
+  check('回读被删的那一行（撤销条要用）', b.ok === true && b.data.deleted === true && b.data.row && b.data.row.title === '高铁去上海', JSON.stringify(b).slice(0, 140));
+
+  resetFake();
+  fakeQueue = [ { status: 200, body: '[]' } ];   // exists 回「不存在」
+  r = await reminders.main({ httpMethod: 'DELETE', path: '/api/reminders/rem-nope' });
+  check('DELETE 不存在 → 404（不谎报成功）', r.statusCode === 404, String(r.statusCode));
+  check('404 时只发了一跳（exists 后就停，没真删）', captured.method === 'GET', String(captured.method));
+
+  resetFake();
+  r = await reminders.main({ httpMethod: 'PATCH', path: '/api/reminders/rem-d27', body: '{}' });
+  check('PATCH → 405（提醒暂无编辑场景，不做以防万一的实现）', r.statusCode === 405, String(r.statusCode));
 
   // =====================================================================
   // Day 22：PATCH / DELETE
